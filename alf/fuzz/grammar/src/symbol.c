@@ -25,6 +25,7 @@
 static int
 _generate_abstract(PyObject *s, void *vg)
 {
+    (void)vg;
     PyErr_Format(PyExc_RuntimeError, "Can't generate an abstract symbol! %s (L%d)", SYMOBJ(s)->name, SYMOBJ(s)->line_no);
     return -1;
 }
@@ -888,6 +889,7 @@ add_regex(SymbolObject *self, PyObject *args)
 static PyObject *
 get_terminal(SymbolObject *self, void *data)
 {
+    (void)data;
     switch (self->terminal) {
         case -1:
             Py_RETURN_NONE;
@@ -904,6 +906,7 @@ get_terminal(SymbolObject *self, void *data)
 static int
 set_terminal(SymbolObject *self, PyObject *value, void *data)
 {
+    (void)data;
     if (value == Py_True)
         self->terminal = 1;
     else if (value == Py_False)

@@ -414,7 +414,7 @@ class Grammar(object):
                     if self.grammar_debug & (1<<6):
                         sys.stderr.write("%s (%d) %sterminating by children\n" % (sym.name, sym.line_no, "" if sym.terminal else "non-"))
             elif self.grammar_debug & (1<<6):
-               sys.stderr.write("%s (%d) already %sterminating\n" % (sym.name, sym.line_no, "" if sym.terminal else "non-"))
+                sys.stderr.write("%s (%d) already %sterminating\n" % (sym.name, sym.line_no, "" if sym.terminal else "non-"))
 
     def _parse_choice(self, ccs, weight, line, path, funcs, used_funcs, line_no):
         if weight == '+':
@@ -607,6 +607,7 @@ class Grammar(object):
     def __getitem__(self, key):
         return self._grmr[key]
 
+import binascii
 import unittest
 
 class GrammarTests(unittest.TestCase):
@@ -721,13 +722,13 @@ class GrammarTests(unittest.TestCase):
             i += 1
             for line in w.generate().splitlines():
                 if line.startswith("zn"):
-                    self.assertRegex(line[2:], r"^[1-9z]{6}$")
+                    self.assertRegexpMatches(line[2:], r"^[1-9z]{6}$")
                 elif line.startswith("a"):
-                    self.assertRegex(line[1:], r"^(\*,[0-9])/c(\1|[b-z]){6}$")
+                    self.assertRegexpMatches(line[1:], r"^(\*,[0-9])/c(\1|[b-z]){6}$")
                 elif line.startswith("n"):
-                    self.assertRegex(line[1:], r"^[0-9]{6}$")
+                    self.assertRegexpMatches(line[1:], r"^[0-9]{6}$")
                 elif line.startswith("c"):
-                    self.assertRegex(line[1:], r"^[a-z]{6}$")
+                    self.assertRegexpMatches(line[1:], r"^[a-z]{6}$")
                 else:
                     raise Exception("unexpected line: %s" % line)
 
@@ -761,7 +762,7 @@ class GrammarTests(unittest.TestCase):
         r = {"C": 0, "D": 0}
         for _ in range(1000):
             v = w.generate()
-            self.assertRegex(v, r"^1234[a-z][CD]$")
+            self.assertRegexpMatches(v, r"^1234[a-z][CD]$")
             r[v[-1]] += 1
         self.assertAlmostEqual(r["C"], 500, delta=50)
         self.assertAlmostEqual(r["D"], 500, delta=50)
@@ -851,7 +852,7 @@ class GrammarTests(unittest.TestCase):
                     "id     'id' [0-9]{6}\n"
                     "func   \"chat('\" id \"',\" [0-9] \",'\" esc(\" width='2pt'\") \"')\"\n"
                     , esc=lambda x:re.sub(r"('|\\)", r"\\\1", x))
-        self.assertRegex(w.generate(), r"^<h5 id='id[0-9]{6}' onload='chat\(\\'id[0-9]{6}"
+        self.assertRegexpMatches(w.generate(), r"^<h5 id='id[0-9]{6}' onload='chat\(\\'id[0-9]{6}"
                                        r"\\',[0-9],\\' width=\\\\\\'2pt\\\\\\'\\'\)'>$")
         # same grammar with '@id' in chat() instead of 'id'
         w = Grammar("@id 8\n"
@@ -859,7 +860,7 @@ class GrammarTests(unittest.TestCase):
                     "id     'id' [0-9]{6}\n"
                     "func   \"chat('\" @id \"',\" [0-9] \",'\" esc(\" width='2pt'\") \"')\"\n"
                     , esc=lambda x:re.sub(r"('|\\)", r"\\\1", x))
-        self.assertRegex(w.generate(), r"^<h5 id='(id[0-9]{6})' onload='chat\(\\'\1"
+        self.assertRegexpMatches(w.generate(), r"^<h5 id='(id[0-9]{6})' onload='chat\(\\'\1"
                                        r"\\',[0-9],\\' width=\\\\\\'2pt\\\\\\'\\'\)'>$")
 
     def test_func_nest_tracked(self):
@@ -875,7 +876,7 @@ class GrammarTests(unittest.TestCase):
                     "id      'id' [0-9]",
                     esc=lambda x:re.sub(r"'", "\\'", x))
         defn, use = w.generate().splitlines()
-        self.assertRegex(defn, r"^id[0-9]$")
+        self.assertRegexpMatches(defn, r"^id[0-9]$")
         self.assertEqual(use, "\\'%s\\'" % defn)
 
     def test_tracked2(self):
@@ -884,17 +885,17 @@ class GrammarTests(unittest.TestCase):
                     "id      'id' [0-9]",
                     esc=lambda x,y:x)
         defn, use = w.generate().splitlines()
-        self.assertRegex(defn, r"^id[0-9]$")
+        self.assertRegexpMatches(defn, r"^id[0-9]$")
         self.assertEqual(use, "not")
 
     def test_tracked3(self):
         w = Grammar("@id 3\n"
                     "root    esc(id) '\\n' @id #rclean\n"
                     "id      'id' [0-9]",
-                    esc=lambda x:"%s\n%s" % (x, ''.join('%02x'%i for i in x.encode())))
+                    esc=lambda x:"%s\n%s" % (x, binascii.hexlify(x.encode()).decode()))
         defn, hexn, use = w.generate().splitlines()
-        self.assertRegex(defn, r"^id[0-9]$")
-        self.assertEqual(''.join('%02x'%i for i in defn.encode()), hexn)
+        self.assertRegexpMatches(defn, r"^id[0-9]$")
+        self.assertEqual(binascii.hexlify(defn.encode()).decode(), hexn)
         self.assertEqual(defn, use)
 
     def test_tracked4(self):
@@ -908,7 +909,7 @@ class GrammarTests(unittest.TestCase):
                     "root    esc(id) @id #rclean\n"
                     "id      'id' [0-9]",
                     esc=lambda x:"")
-        self.assertRegex(w.generate(), r"^id[0-9]$")
+        self.assertRegexpMatches(w.generate(), r"^id[0-9]$")
 
     def test_tracked6(self):
         w = Grammar("@id 4\n"
@@ -939,7 +940,7 @@ class GrammarTests(unittest.TestCase):
                     "A               filt() A",
                     filt=filt)
         v = w.generate()
-        self.assertRegex(v, r"^a+$")
+        self.assertRegexpMatches(v, r"^a+$")
         self.assertAlmostEqual(len(v), 10, delta=3)
 
     def test_hard_depth(self):

@@ -33,6 +33,7 @@
 #              1 Def2
 ################################################################################
 
+import binascii
 import logging as log
 import io
 import os
@@ -221,7 +222,7 @@ class Grammar(object):
         if "rndflt" not in self.funcs:
             self.funcs["rndflt"] = lambda a, b: str(random.uniform(float(a), float(b)))
         if not isinstance(grammar, io.IOBase):
-            grammar = io.StringIO(grammar)
+            grammar = io.StringIO(grammar.decode() if isinstance(grammar, bytes) else grammar)
         ljoin = ""
         for line_no, line in enumerate(grammar, 1):
             log.debug("parsing line # %d: %s", line_no, line.rstrip())
@@ -269,8 +270,8 @@ class Grammar(object):
                 if sym.fname not in self.funcs:
                     raise Exception("Function %s used on line %d but not defined" % (sym.fname, sym.line_no))
                 funcs_used.add(sym.fname)
-        if self.funcs.keys() != funcs_used:
-            raise Exception("Unused keyword argument(s): %s" % list(self.funcs.keys() - funcs_used))
+        if set(self.funcs.keys()) != funcs_used:
+            raise Exception("Unused keyword argument(s): %s" % list(set(self.funcs.keys()) - funcs_used))
 
 
     def copy0(self):
@@ -406,7 +407,7 @@ class BinSymbol(Symbol):
     def __init__(self, value, line_no, grmr):
         name = "[bin %s]" % grmr.implicit()
         Symbol.__init__(self, name, line_no, grmr)
-        self.value = bytes.fromhex(value)
+        self.value = binascii.unhexlify(value)
         log.debug("\tbin %s: %s", name, value)
 
     def generate(self, gstate):

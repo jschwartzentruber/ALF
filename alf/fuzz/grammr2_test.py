@@ -16,8 +16,8 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 ################################################################################
-from .grammr2 import Grammar, WeightedChoice
-from .grammr2_crack import GrammarCracker
+from grammr2 import Grammar, WeightedChoice
+from grammr2_crack import GrammarCracker
 import re
 import unittest
 
@@ -40,23 +40,23 @@ class GrammarTests(unittest.TestCase):
         r = {1:0, 2:0, 3:0}
         for _ in range(iters):
             r[w.choice()] += 1
-        self.assertAlmostEqual(r[1]/iters, 0.25, delta=.02)
-        self.assertAlmostEqual(r[2]/iters, 0.5, delta=.02)
-        self.assertAlmostEqual(r[3]/iters, 0.25, delta=.02)
+        self.assertAlmostEqual(float(r[1])/iters, 0.25, delta=.02)
+        self.assertAlmostEqual(float(r[2])/iters, 0.5, delta=.02)
+        self.assertAlmostEqual(float(r[3])/iters, 0.25, delta=.02)
         w = WeightedChoice([(1, 3), (2, 1), (3, 1)])
         r = {1:0, 2:0, 3:0}
         for _ in range(iters):
             r[w.choice()] += 1
-        self.assertAlmostEqual(r[1]/iters, 0.6, delta=.02)
-        self.assertAlmostEqual(r[2]/iters, 0.2, delta=.02)
-        self.assertAlmostEqual(r[3]/iters, 0.2, delta=.02)
+        self.assertAlmostEqual(float(r[1])/iters, 0.6, delta=.02)
+        self.assertAlmostEqual(float(r[2])/iters, 0.2, delta=.02)
+        self.assertAlmostEqual(float(r[3])/iters, 0.2, delta=.02)
         w = WeightedChoice([(1, 1), (2, 1), (3, 4)])
         r = {1:0, 2:0, 3:0}
         for _ in range(iters):
             r[w.choice()] += 1
-        self.assertAlmostEqual(r[1]/iters, 1/6, delta=.02)
-        self.assertAlmostEqual(r[2]/iters, 1/6, delta=.02)
-        self.assertAlmostEqual(r[3]/iters, 2/3, delta=.02)
+        self.assertAlmostEqual(float(r[1])/iters, 1.0/6, delta=.02)
+        self.assertAlmostEqual(float(r[2])/iters, 1.0/6, delta=.02)
+        self.assertAlmostEqual(float(r[3])/iters, 2.0/3, delta=.02)
 
     def test_funcs(self):
         iters = 10
@@ -78,13 +78,13 @@ class GrammarTests(unittest.TestCase):
             i += 1
             for line in w.generate().splitlines():
                 if line.startswith("zn"):
-                    self.assertRegex(line[2:], r"^[1-9z]{6}$")
+                    self.assertRegexpMatches(line[2:], r"^[1-9z]{6}$")
                 elif line.startswith("a"):
-                    self.assertRegex(line[1:], r"^(\*,[0-9])/c(\1|[b-z]){6}$")
+                    self.assertRegexpMatches(line[1:], r"^(\*,[0-9])/c(\1|[b-z]){6}$")
                 elif line.startswith("n"):
-                    self.assertRegex(line[1:], r"^[0-9]{6}$")
+                    self.assertRegexpMatches(line[1:], r"^[0-9]{6}$")
                 elif line.startswith("c"):
-                    self.assertRegex(line[1:], r"^[a-z]{6}$")
+                    self.assertRegexpMatches(line[1:], r"^[a-z]{6}$")
                 else:
                     raise Exception("unexpected line: %s" % line)
 
@@ -121,7 +121,7 @@ class GrammarTests(unittest.TestCase):
         r = {"C": 0, "D": 0}
         for _ in range(1000):
             v = w.generate()
-            self.assertRegex(v, r"^1234[a-z][CD]$")
+            self.assertRegexpMatches(v, r"^1234[a-z][CD]$")
             r[v[-1]] += 1
         self.assertAlmostEqual(r["C"], 500, delta=50)
         self.assertAlmostEqual(r["D"], 500, delta=50)
@@ -210,14 +210,14 @@ class GrammarTests(unittest.TestCase):
                     "id     'id' /[0-9]{6}/\n"
                     "func   \"chat('\" id \"',\" /[0-9]/ \",'\" esc(\" width='2pt'\") \"')\"\n"
                     , esc=lambda x: re.sub(r"('|\\)", r"\\\1", x))
-        self.assertRegex(w.generate(), r"^<h5 id='id[0-9]{6}' onload='chat\(\\'id[0-9]{6}"
+        self.assertRegexpMatches(w.generate(), r"^<h5 id='id[0-9]{6}' onload='chat\(\\'id[0-9]{6}"
                                        r"\\',[0-9],\\' width=\\\\\\'2pt\\\\\\'\\'\)'>$")
         # same grammar with '@id' in chat() instead of 'id'
         w = Grammar("root   \"<h5 id='\" id \"' onload='\" esc(func) \"'>\"\n"
                     "id     'id' /[0-9]{6}/\n"
                     "func   \"chat('\" @id \"',\" /[0-9]/ \",'\" esc(\" width='2pt'\") \"')\"\n"
                     , esc=lambda x: re.sub(r"('|\\)", r"\\\1", x))
-        self.assertRegex(w.generate(), r"^<h5 id='(id[0-9]{6})' onload='chat\(\\'\1"
+        self.assertRegexpMatches(w.generate(), r"^<h5 id='(id[0-9]{6})' onload='chat\(\\'\1"
                                        r"\\',[0-9],\\' width=\\\\\\'2pt\\\\\\'\\'\)'>$")
 
     def test_func_nest_tracked(self):
@@ -231,7 +231,7 @@ class GrammarTests(unittest.TestCase):
                     "id      'id' /[0-9]/",
                     esc=lambda x: re.sub(r"'", "\\'", x))
         defn, use = w.generate().splitlines()
-        self.assertRegex(defn, r"^id[0-9]$")
+        self.assertRegexpMatches(defn, r"^id[0-9]$")
         self.assertEqual(use, "\\'%s\\'" % defn)
 
     def test_tracked2(self):
@@ -239,7 +239,7 @@ class GrammarTests(unittest.TestCase):
                     "id      'id' /[0-9]/",
                     esc=lambda x, y: x)
         defn, use = w.generate().splitlines()
-        self.assertRegex(defn, r"^id[0-9]$")
+        self.assertRegexpMatches(defn, r"^id[0-9]$")
         self.assertEqual(use, "not")
 
     def test_tracked3(self):
@@ -247,7 +247,7 @@ class GrammarTests(unittest.TestCase):
                     "id      'id' /[0-9]/",
                     esc=lambda x: "%s\n%s" % (x, "".join("%02x" % ord(c) for c in x)))
         defn, hexn, use = w.generate().splitlines()
-        self.assertRegex(defn, r"^id[0-9]$")
+        self.assertRegexpMatches(defn, r"^id[0-9]$")
         self.assertEqual("".join("%02x" % ord(c) for c in defn), hexn)
         self.assertEqual(defn, use)
 
@@ -260,7 +260,7 @@ class GrammarTests(unittest.TestCase):
         w = Grammar("root    esc(id) @id\n"
                     "id      'id' /[0-9]/",
                     esc=lambda x: "")
-        self.assertRegex(w.generate(), r"^id[0-9]$")
+        self.assertRegexpMatches(w.generate(), r"^id[0-9]$")
 
     def test_tyson(self):
         w = Grammar('root   /[0-1]{1}/ "]"')
@@ -308,7 +308,7 @@ class GrammarTests(unittest.TestCase):
                     except KeyError:
                         stats[c] = 1
             for c, v in stats.items():
-                self.assertAlmostEqual(v / 100, ref[c], 0)
+                self.assertAlmostEqual(float(v) / 100, ref[c], 0)
 
     def test_bin(self):
         w = Grammar("root x'68656c6c6f2c20776f726c6400'")

@@ -94,9 +94,14 @@ Grammar_subscript(GrammarObject *self, PyObject *key)
 {
     PyObject *res;
     res = PyDict_GetItem(self->sym_dict, key);
-    if (res == NULL && PyLong_Check(key)) {
-        return Grammar_getitem(self, PyLong_AsSsize_t(key));
-    } else if (res == NULL) {
+    if (res == NULL) {
+#if PY_MAJOR_VERSION >= 3
+        if (PyLong_Check(key))
+          return Grammar_getitem(self, PyLong_AsSsize_t(key));
+#else
+        if (PyInt_Check(key))
+          return Grammar_getitem(self, PyInt_AsSsize_t(key));
+#endif
         PyErr_SetObject(PyExc_KeyError, key);
         return NULL;
     } else {
@@ -381,7 +386,7 @@ Grammar_getitem(GrammarObject *self, Py_ssize_t i)
     if (i >= 0 && i < self->n_syms) {
         PyObject *ret = self->sym_list[i];
         if (!ret) {
-            PyErr_Format(PyExc_RuntimeError, "got NULL for %d-th symbol in grammar?", i);
+            PyErr_Format(PyExc_RuntimeError, "got NULL for %ld-th symbol in grammar?", i);
             return NULL;
         }
         Py_INCREF(ret);

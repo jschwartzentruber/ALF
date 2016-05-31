@@ -26,9 +26,9 @@ clean:
 	rm -f $(PYTGT)
 
 $(PYTGT): $(SOURCES) $(HEADERS) Makefile.linux
-	$(CC) -shared -Wl,-soname,$@ `python3-config --includes` $(CFLAGS) \
+	$(CC) -shared -Wl,-soname,$@ `python-config --includes` $(CFLAGS) \
 		-o $@ $(SOURCES) \
-		`python3-config --libs`
+		`python-config --libs`
 	$(STRIP) --strip-unneeded $@
 
 .PHONY: all clean

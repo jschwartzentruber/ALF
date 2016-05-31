@@ -16,7 +16,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 ################################################################################
-from .grammr2 import BinSymbol, ChoiceSymbol, ConcatSymbol, FuncSymbol, RefSymbol, RegexSymbol, RepeatSymbol, TextSymbol
+from grammr2 import BinSymbol, ChoiceSymbol, ConcatSymbol, FuncSymbol, RefSymbol, RegexSymbol, RepeatSymbol, TextSymbol
 
 class _slushydict(dict):
     """hashable, but not immutable"""
