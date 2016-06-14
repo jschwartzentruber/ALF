@@ -206,7 +206,7 @@ class Grammar(object):
                            ^(?P<broken>.*)\\$ |
                            ^\s*(?P<comment>\#).*$ |
                            ^(?P<nothing>\s*)$ |
-                           ^(?P<name>\w+)(?P<type>\s*((?P<weight>[\d.]+)|\||\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\})\s*|\s+)(?P<def>.+)$ |
+                           ^(?P<name>[\w-]+)(?P<type>\s*((?P<weight>[\d.]+)|\||\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\})\s*|\s+)(?P<def>.+)$ |
                            ^\s+(\||(?P<contweight>[\d.]+))\s*(?P<cont>.+)$
                            """, re.VERBOSE)
 
@@ -323,8 +323,8 @@ class Symbol(object):
                            ^(?P<infunc>[,)]) |
                            ^(?P<comment>\#).* |
                            ^(?P<func>\w+)\( |
-                           ^@(?P<ref>\w+) |
-                           ^(?P<sym>\w+) |
+                           ^@(?P<ref>[\w-]+) |
+                           ^(?P<sym>[\w-]+) |
                            ^(?P<ws>\s+)""", re.VERBOSE)
 
     def __init__(self, name, line_no, grmr=None):

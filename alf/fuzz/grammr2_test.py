@@ -314,6 +314,11 @@ class GrammarTests(unittest.TestCase):
         w = Grammar("root x'68656c6c6f2c20776f726c6400'")
         self.assertEqual(w.generate(), b"hello, world\0")
 
+    def test_dashname(self):
+        w = Grammar("root a-a\n"
+                    "a-a 'a'\n")
+        self.assertEqual(w.generate(), "a")
+
 
 suite = unittest.TestLoader().loadTestsFromTestCase(GrammarTests)
 
