@@ -41,7 +41,7 @@ import random
 import re
 
 
-DEFAULT_LIMIT=100*1024
+DEFAULT_LIMIT = 100 * 1024
 
 if bool(os.getenv("DEBUG")):
     log.getLogger().setLevel(log.DEBUG)
@@ -94,7 +94,7 @@ class WeightedChoice(object):
         raise GenerationError("Too much total weight? remainder is %0.2f from %0.2f total" % (target, self.total))
 
     def __repr__(self):
-        return "WeightedChoice(%s)" % list(zip(self.values, self.weights))
+        return "WeightedChoice(%s)" % tuple(zip(self.values, self.weights))
 
 
 class Grammar(object):
@@ -228,7 +228,6 @@ class Grammar(object):
         self._limit = limit
         self._start = None
         self.symtab = {}
-        self.n_implicit = -1
         self.tracked = set()
         self.funcs = kwargs
         if "rndint" not in self.funcs:
@@ -239,6 +238,7 @@ class Grammar(object):
             grammar = io.StringIO(grammar.decode() if isinstance(grammar, bytes) else grammar)
         ljoin = ""
         for line_no, line in enumerate(grammar, 1):
+            self.n_implicit = -1
             log.debug("parsing line # %d: %s", line_no, line.rstrip())
             m = Grammar._RE_LINE.match(ljoin + line)
             if m is None:
@@ -411,7 +411,7 @@ class BinSymbol(Symbol):
     _RE_QUOTE = re.compile(r'''(?P<end>["'])''')
 
     def __init__(self, value, line_no, grmr):
-        name = "[bin %s]" % grmr.implicit()
+        name = "[bin (line %d #%d)]" % (line_no, grmr.implicit())
         Symbol.__init__(self, name, line_no, grmr)
         self.value = binascii.unhexlify(value)
         log.debug("\tbin %s: %s", name, value)
@@ -445,7 +445,7 @@ class TextSymbol(Symbol):
     _RE_QUOTE = re.compile(r'''(?P<end>["'])|\\(?P<esc>.)''')
 
     def __init__(self, value, line_no, grmr):
-        name = "[text %s]" % grmr.implicit()
+        name = "[text (line %d #%d)]" % (line_no, grmr.implicit())
         Symbol.__init__(self, name, line_no, grmr)
         self.value = value
         log.debug("\ttext %s: %s", name, value)
@@ -524,7 +524,7 @@ class ChoiceSymbol(Symbol, WeightedChoice):
 class FuncSymbol(Symbol):
 
     def __init__(self, name, line_no, grmr):
-        sname = "[%s %s]" % (name, grmr.implicit())
+        sname = "[%s (line %d #%d)]" % (name, line_no, grmr.implicit())
         Symbol.__init__(self, sname, line_no, grmr)
         self.fname = name
         self.args = []
@@ -602,7 +602,7 @@ class RepeatSymbol(Symbol, list):
         if gstate.grmr.is_limit_exceeded(gstate.length):
             return
         n = random.randint(self.a, random.randint(self.a, self.b)) # roughly betavariate(0.75, 2.25)
-        gstate.symstack.extend(n * list(reversed(self)))
+        gstate.symstack.extend(n * tuple(reversed(self)))
 
 
 class RegexSymbol(Symbol):
@@ -613,7 +613,7 @@ class RegexSymbol(Symbol):
     _RE_REPEAT = re.compile(r"^\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\}")
 
     def __init__(self, line_no, grmr):
-        name = "[regex %s]" % grmr.implicit()
+        name = "[regex (line %d #%d)]" % (line_no, grmr.implicit())
         Symbol.__init__(self, name, line_no, grmr)
         self.parts = []
         self.n_implicit = 0
