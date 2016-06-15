@@ -285,7 +285,34 @@ class Grammar(object):
                     raise IntegrityError("Function %s used on line %d but not defined" % (sym.fname, sym.line_no))
                 funcs_used.add(sym.fname)
         if set(self.funcs.keys()) != funcs_used:
-            raise IntegrityError("Unused keyword argument(s): %s" % list(set(self.funcs.keys()) - funcs_used))
+            unused_kwds = tuple(set(self.funcs.keys()) - funcs_used)
+            raise IntegrityError("Unused keyword argument%s: %s" % ("s" if len(unused_kwds) > 1 else "", unused_kwds))
+        syms_used = {"root"}
+        to_check = {"root"}
+        checked = set()
+        while to_check:
+            sym = self.symtab[to_check.pop()]
+            checked.add(sym.name)
+            children = set()
+            if isinstance(sym, FuncSymbol):
+                children = set(sym.args)
+            elif isinstance(sym, (ConcatSymbol, RepeatSymbol)):
+                children = set(sym)
+            elif isinstance(sym, ChoiceSymbol):
+                for child in sym.values:
+                    children |= set(child)
+            elif isinstance(sym, RegexSymbol):
+                children = set(sym.parts)
+            elif isinstance(sym, RefSymbol):
+                children = {sym.ref}
+            log.debug("%s is %s with %d children", sym.name, type(sym).__name__, len(children))
+            syms_used |= children
+            to_check |= children - checked
+        if set(self.symtab.keys()) != syms_used:
+            unused_syms = tuple(set(self.symtab.keys()) - syms_used)
+            used_syms = tuple(syms_used)
+            raise IntegrityError("Unused symbol%s: %s, Used symbol%s: %s" % ("s" if len(unused_syms) > 1 else "", unused_syms,
+                                                                             "s" if len(used_syms) > 1 else "", used_syms))
 
     def is_limit_exceeded(self, length):
         return self._limit is not None and length >= self._limit
