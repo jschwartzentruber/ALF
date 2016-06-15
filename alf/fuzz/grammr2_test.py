@@ -17,7 +17,6 @@
 #    limitations under the License.
 ################################################################################
 from grammr2 import Grammar, WeightedChoice, ParseError
-from grammr2_crack import GrammarCracker
 import re
 import unittest
 
@@ -266,49 +265,6 @@ class GrammarTests(unittest.TestCase):
         w = Grammar('root   /[0-1]{1}/ "]"')
         o = w.generate()
         self.assertIn(o, ["0]", "1]"])
-
-    def test_re(self):
-        w = Grammar('root /.*/')
-        r = GrammarCracker(w)
-        for _ in range(100):
-            r.crack(w.generate())
-
-    def test_crack(self):
-        w = Grammar('root   "a" b c\n'
-                    'b  0   ""\n'
-                    '   1   "1"\n'
-                    '   1   "2"\n'
-                    '   1   "3"\n'
-                    '   1   "4"\n'
-                    'c{0,2} "c"')
-        GrammarCracker(w).crack(w.generate())
-
-    def test_crack2(self):
-        w = Grammar('root   b\n'
-                    'b{7}  c\n'
-                    'c  1   "1"\n'
-                    '   1   "2"\n'
-                    '   1   "3"\n'
-                    '   4   "4"')
-        r = GrammarCracker(w)
-        for _ in range(10):
-            g = w.generate()
-            nw = r.crack(g)
-            ref = {}
-            for c in g:
-                try:
-                    ref[c] += 1
-                except KeyError:
-                    ref[c] = 1
-            stats = {}
-            for _ in range(100):
-                for c in nw.generate():
-                    try:
-                        stats[c] += 1
-                    except KeyError:
-                        stats[c] = 1
-            for c, v in stats.items():
-                self.assertAlmostEqual(float(v) / 100, ref[c], 0)
 
     def test_bin(self):
         w = Grammar("root x'68656c6c6f2c20776f726c6400'")

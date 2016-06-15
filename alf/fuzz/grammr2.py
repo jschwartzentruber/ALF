@@ -290,16 +290,6 @@ class Grammar(object):
     def is_limit_exceeded(self, length):
         return self._limit is not None and length >= self._limit
 
-    def copy0(self):
-        # used by GrammarCracker
-        r = Grammar()
-        r._start = self._start
-        r.n_implicit = self.n_implicit
-        r.tracked = self.tracked
-        r.funcs = self.funcs
-        r.symtab = {nm: sym.copy0() for nm, sym in self.symtab.items()}
-        return r
-
     def implicit(self):
         self.n_implicit += 1
         return self.n_implicit
@@ -397,9 +387,6 @@ class Symbol(object):
                 break
             result.append(sym.name)
         return result, defn
-
-    def copy0(self):
-        return self
 
     @staticmethod
     def parse_func_arg(defn, line_no, grmr):
@@ -524,13 +511,6 @@ class ChoiceSymbol(Symbol, WeightedChoice):
         Symbol.__init__(self, name, line_no, grmr)
         WeightedChoice.__init__(self)
         log.debug("\tchoice %s", name)
-        self.cracker = None
-
-    def copy0(self):
-        r = ChoiceSymbol(self.name, self.line_no, None)
-        r.values = self.values
-        r.weights = [0] * len(self.values)
-        return r
 
     def append(self, value, weight, grmr):
         if len(value) == 1 and isinstance(grmr.symtab[value[0]], WeightedChoice):
@@ -542,8 +522,6 @@ class ChoiceSymbol(Symbol, WeightedChoice):
 
 
 class FuncSymbol(Symbol):
-    _RE_CRACK_RNDFLT = re.compile(r"[0-9e.+-]+")
-    _RE_CRACK_RNDINT = re.compile(r"[0-9+-]+")
 
     def __init__(self, name, line_no, grmr):
         sname = "[%s %s]" % (name, grmr.implicit())
@@ -560,18 +538,6 @@ class FuncSymbol(Symbol):
             args.append(gstate.grmr.generate(astate))
         gstate.output.append(gstate.grmr.funcs[self.fname](*args))
         gstate.length += len(gstate.output[-1])
-
-    def match_rndflt(self, inp, ptr):
-        m = FuncSymbol._RE_CRACK_RNDFLT.match(inp[ptr:])
-        if m is not None:
-            return len(m.group(0))
-        return 0
-
-    def match_rndint(self, inp, ptr):
-        m = FuncSymbol._RE_CRACK_RNDINT.match(inp[ptr:])
-        if m is not None:
-            return len(m.group(0))
-        return 0
 
     @staticmethod
     def parse(name, defn, line_no, grmr):
@@ -632,31 +598,11 @@ class RepeatSymbol(Symbol, list):
         self.a, self.b = a, b
         log.debug("\trepeat %s", name)
 
-    def copy0(self):
-        r = RepeatSymbol(self.name, 0, 0, self.line_no, None)
-        r.extend(self)
-        return r
-
     def generate(self, gstate):
         if gstate.grmr.is_limit_exceeded(gstate.length):
             return
         n = random.randint(self.a, random.randint(self.a, self.b)) # roughly betavariate(0.75, 2.25)
         gstate.symstack.extend(n * list(reversed(self)))
-
-
-class _RegexClassSymbol(Symbol):
-
-    def __init__(self, alpha=None, inv=False):
-        self.alpha, self.inv = alpha, inv
-
-    def match(self, inp, ptr):
-        if ptr >= len(inp):
-            pass
-        elif self.alpha is None or (not self.inv and inp[ptr] in self.alpha):
-            return 1
-        elif self.inv and inp[ptr] not in self.alpha:
-            return 1
-        return 0
 
 
 class RegexSymbol(Symbol):
@@ -727,7 +673,6 @@ class RegexSymbol(Symbol):
                 else:
                     break
                 alpha = set(alpha)
-                sym.cracker = _RegexClassSymbol(alpha, inverse)
                 if inverse:
                     alpha = set(RegexSymbol._REGEX_ALPHABET) - alpha
                 for s in alpha:
@@ -741,7 +686,6 @@ class RegexSymbol(Symbol):
                     sym = grmr.symtab["[regex alpha]"]
                 except KeyError:
                     sym = ChoiceSymbol("[regex alpha]", 0, grmr)
-                    sym.cracker = _RegexClassSymbol()
                     for s in RegexSymbol._REGEX_ALPHABET:
                         sym.append([TextSymbol(s, 0, grmr).name], 1, grmr)
             elif defn[c] == "\\":
