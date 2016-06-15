@@ -41,6 +41,8 @@ import random
 import re
 
 
+DEFAULT_LIMIT=100*1024
+
 if bool(os.getenv("DEBUG")):
     log.getLogger().setLevel(log.DEBUG)
 
@@ -62,6 +64,7 @@ class _GenState(object):
         self.instances = {}
         self.output = []
         self.grmr = grmr
+        self.length = 0
 
 
 class WeightedChoice(object):
@@ -220,8 +223,9 @@ class Grammar(object):
                            ^\s+(\||(?P<contweight>[\d.]+))\s*(?P<cont>.+)$
                            """, re.VERBOSE)
 
-    def __init__(self, grammar="", **kwargs):
+    def __init__(self, grammar="", limit=DEFAULT_LIMIT, **kwargs):
         sym = None
+        self._limit = limit
         self._start = None
         self.symtab = {}
         self.n_implicit = -1
@@ -283,6 +287,8 @@ class Grammar(object):
         if set(self.funcs.keys()) != funcs_used:
             raise IntegrityError("Unused keyword argument(s): %s" % list(set(self.funcs.keys()) - funcs_used))
 
+    def is_limit_exceeded(self, length):
+        return self._limit is not None and length >= self._limit
 
     def copy0(self):
         # used by GrammarCracker
@@ -425,6 +431,7 @@ class BinSymbol(Symbol):
 
     def generate(self, gstate):
         gstate.output.append(self.value)
+        gstate.length += len(self.value)
 
     def match(self, inp, ptr):
         # returns the length of matching input (0 for no match)
@@ -458,6 +465,7 @@ class TextSymbol(Symbol):
 
     def generate(self, gstate):
         gstate.output.append(self.value)
+        gstate.length += len(self.value)
 
     def match(self, inp, ptr):
         # returns the length of matching input (0 for no match)
@@ -551,6 +559,7 @@ class FuncSymbol(Symbol):
             astate.instances = gstate.instances
             args.append(gstate.grmr.generate(astate))
         gstate.output.append(gstate.grmr.funcs[self.fname](*args))
+        gstate.length += len(gstate.output[-1])
 
     def match_rndflt(self, inp, ptr):
         m = FuncSymbol._RE_CRACK_RNDFLT.match(inp[ptr:])
@@ -594,6 +603,7 @@ class RefSymbol(Symbol):
     def generate(self, gstate):
         if gstate.instances[self.ref]:
             gstate.output.append(random.choice(gstate.instances[self.ref]))
+            gstate.length += len(gstate.output[-1])
         else:
             pass # TODO, no instances yet, what now? generate one?
             # dharma generates content first, then reference definitions after (which must be created before the content)
@@ -628,6 +638,8 @@ class RepeatSymbol(Symbol, list):
         return r
 
     def generate(self, gstate):
+        if gstate.grmr.is_limit_exceeded(gstate.length):
+            return
         n = random.randint(self.a, random.randint(self.a, self.b)) # roughly betavariate(0.75, 2.25)
         gstate.symstack.extend(n * list(reversed(self)))
 
@@ -779,7 +791,8 @@ if __name__ == "__main__":
     argp.add_argument("input", type=argparse.FileType('r'), help="Input grammar definition")
     argp.add_argument("output", type=argparse.FileType('w'), nargs="?", default=sys.stdout, help="Output testcase")
     argp.add_argument("-f", "--function", action="append", nargs=2, help="Function used in the grammar (eg. -f filter lambda x:x.replace('x','y')", default=[])
+    argp.add_argument("-l", "--limit", type=int, default=DEFAULT_LIMIT, help="Set a generation limit (roughly)")
     args = argp.parse_args()
     args.function = {func: eval(defn) for (func, defn) in args.function}
-    args.output.write(Grammar(args.input.read(), **args.function).generate())
+    args.output.write(Grammar(args.input.read(), limit=args.limit, **args.function).generate())
 
