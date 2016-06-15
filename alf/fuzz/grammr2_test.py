@@ -275,6 +275,11 @@ class GrammarTests(unittest.TestCase):
                     "a-a 'a'\n")
         self.assertEqual(w.generate(), "a")
 
+    def test_limit(self):
+        w = Grammar("root       foo bar\n"
+                    "bar {1}    @foo bar\n"
+                    "foo        'i0'", limit=10)
+        self.assertEqual(len(w.generate()), 10)
 
 suite = unittest.TestLoader().loadTestsFromTestCase(GrammarTests)
 
