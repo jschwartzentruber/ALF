@@ -16,7 +16,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 ################################################################################
-from grammr2 import Grammar, WeightedChoice
+from grammr2 import Grammar, WeightedChoice, ParseError
 from grammr2_crack import GrammarCracker
 import re
 import unittest
@@ -160,9 +160,9 @@ class GrammarTests(unittest.TestCase):
 
     def test_quo5(self):
         # unbalanced parens, end paren is escaped .. should raise
-        with self.assertRaises(Exception):
+        with self.assertRaises(ParseError):
             Grammar(r"root    '\\\\\\\'")
-        with self.assertRaises(Exception):
+        with self.assertRaises(ParseError):
             Grammar(r'root    "\\\\\\\"')
 
     def test_quo6(self):
