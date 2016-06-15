@@ -253,7 +253,7 @@ class GrammarTests(unittest.TestCase):
     def test_tracked4(self):
         w = Grammar("root    @id\n"
                     "id      'id' /[0-9]/")
-        self.assertEqual(w.generate(), "")
+        self.assertRegexpMatches(w.generate(), r"^id[0-9]$")
 
     def test_tracked5(self):
         w = Grammar("root    esc(id) @id\n"

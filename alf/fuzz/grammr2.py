@@ -571,24 +571,9 @@ class RefSymbol(Symbol):
             gstate.output.append(random.choice(gstate.instances[self.ref]))
             gstate.length += len(gstate.output[-1])
         else:
-            pass # TODO, no instances yet, what now? generate one?
-            # dharma generates content first, then reference definitions after (which must be created before the content)
-            # this makes the testcases much cleaner ...  but how to work with the cracker?
-            # IDEA:
-            # we know which variables are tracked .. (ie references are possible, added to Grammar.tracked)
-            # so whenever a tracked variable could occur, don't generate it, but keep track of where it could be
-            # - if it's in a choice, set the weight to 0
-            # - if it's somewhere else ?? error?
-            # if a reference to the tracked variable is used, go back and generate the tracked variable in one of the preceding places
-            # it could have occurred.
-            #
-            # simpler:
-            # don't mess with the weights, but do keep track of the first place one could have occurred but didn't
-            # if a reference is needed before one is actually generated, go back and generate it where it could have occurred.
-            # - might be complicated (might violate repeat conditions, might need a reference before we find a place to generate the declaration)
-            #
-            # alternate: go dharma style and don't allow reference variables to be declared except when called for, then defined in a specific place
-            # - how does this work with parsing?
+            log.debug("No instances of %s yet, generating one instead of a reference", self.ref)
+            gstate.grmr.symtab[self.ref].generate(gstate)
+
 
 class RepeatSymbol(Symbol, list):
 
