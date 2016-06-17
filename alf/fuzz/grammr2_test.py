@@ -261,5 +261,15 @@ class GrammarTests(unittest.TestCase):
                     "foo        'i0'", limit=10)
         self.assertEqual(len(w.generate()), 10)
 
+    def test_builtin_rndint(self):
+        w = Grammar("root       rndint(1,10)")
+        self.assertGreaterEqual(int(w.generate()), 1)
+        self.assertLessEqual(int(w.generate()), 10)
+
+    def test_builtin_rndflt(self):
+        w = Grammar("root       rndflt(1,10)")
+        self.assertGreaterEqual(float(w.generate()), 1)
+        self.assertLessEqual(float(w.generate()), 10)
+
 suite = unittest.TestLoader().loadTestsFromTestCase(GrammarTests)
 
