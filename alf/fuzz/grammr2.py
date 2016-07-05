@@ -36,6 +36,7 @@
 import binascii
 import logging as log
 import io
+import numbers
 import os
 import random
 import re
@@ -300,7 +301,7 @@ class Grammar(object):
             checked.add(sym.name)
             children = set()
             if isinstance(sym, FuncSymbol):
-                children = set(sym.args)
+                children = set(a for a in sym.args if not isinstance(a, numbers.Number))
             elif isinstance(sym, (ConcatSymbol, RepeatSymbol)):
                 children = set(sym)
             elif isinstance(sym, ChoiceSymbol):
@@ -562,10 +563,13 @@ class FuncSymbol(Symbol):
     def generate(self, gstate):
         args = []
         for arg in self.args:
-            astate = _GenState(gstate.grmr)
-            astate.symstack = [arg]
-            astate.instances = gstate.instances
-            args.append(gstate.grmr.generate(astate))
+            if isinstance(arg, numbers.Number):
+                args.append(arg)
+            else:
+                astate = _GenState(gstate.grmr)
+                astate.symstack = [arg]
+                astate.instances = gstate.instances
+                args.append(gstate.grmr.generate(astate))
         gstate.output.append(gstate.grmr.funcs[self.fname](*args))
         gstate.length += len(gstate.output[-1])
 
@@ -580,9 +584,21 @@ class FuncSymbol(Symbol):
             done = defn[0] == ")"
             defn = defn[1:]
             if arg or not done:
-                sym = ConcatSymbol("%s.%s]" % (result.name[:-1], len(result.args)), line_no, grmr)
-                sym.extend(arg)
-                result.args.append(sym.name)
+                numeric_arg = False
+                if len(arg) == 1 and isinstance(grmr.symtab[arg[0]], AbstractSymbol):
+                    for numtype in (int, float):
+                        try:
+                            value = numtype(arg[0])
+                            result.args.append(value)
+                            del grmr.symtab[arg[0]]
+                            numeric_arg = True
+                            break
+                        except ValueError:
+                            pass
+                if not numeric_arg:
+                    sym = ConcatSymbol("%s.%s]" % (result.name[:-1], len(result.args)), line_no, grmr)
+                    sym.extend(arg)
+                    result.args.append(sym.name)
         return result, defn
 
 
