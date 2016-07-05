@@ -533,7 +533,8 @@ class ConcatSymbol(Symbol, list):
     def __init__(self, name, line_no, grmr):
         Symbol.__init__(self, name, line_no, grmr)
         list.__init__(self)
-        log.debug("\tconcat %s", name)
+        if type(self) == ConcatSymbol:
+            log.debug("\tconcat %s", name)
         self.can_terminate = None
 
     def generate(self, gstate):
@@ -680,7 +681,7 @@ class RepeatSymbol(Symbol, list):
         return set(self)
 
 
-class RegexSymbol(Symbol):
+class RegexSymbol(ConcatSymbol):
     _REGEX_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" \
                       "abcdefghijklmnopqrstuvwxyz" \
                       "0123456789" \
@@ -689,8 +690,7 @@ class RegexSymbol(Symbol):
 
     def __init__(self, line_no, grmr):
         name = "[regex (line %d #%d)]" % (line_no, grmr.implicit())
-        Symbol.__init__(self, name, line_no, grmr)
-        self.parts = []
+        ConcatSymbol.__init__(self, name, line_no, grmr)
         self.n_implicit = 0
         log.debug("\tregex %s", name)
         self.can_terminate = True
@@ -705,13 +705,7 @@ class RegexSymbol(Symbol):
         self.n_implicit += 1
         rep = RepeatSymbol(name, a, b, self.line_no, grmr)
         rep.append(sym.name)
-        self.parts.append(name)
-
-    def generate(self, gstate):
-        gstate.symstack.extend(reversed(self.parts))
-
-    def children(self):
-        return set(self.parts)
+        self.append(name)
 
     @staticmethod
     def parse(defn, line_no, grmr):
@@ -723,12 +717,12 @@ class RegexSymbol(Symbol):
         while c < len(defn):
             if defn[c] == "/":
                 if sym is not None:
-                    result.parts.append(sym.name)
+                    result.append(sym.name)
                 return result, defn[c+1:]
             elif defn[c] == "[":
                 # range
                 if sym is not None:
-                    result.parts.append(sym.name)
+                    result.append(sym.name)
                 sym = result.new_choice(grmr)
                 inverse = defn[c+1] == "^"
                 c += 2 if inverse else 1
@@ -759,7 +753,7 @@ class RegexSymbol(Symbol):
             elif defn[c] == ".":
                 # any one thing
                 if sym is not None:
-                    result.parts.append(sym.name)
+                    result.append(sym.name)
                 c += 1
                 try:
                     sym = grmr.symtab["[regex alpha]"]
@@ -770,7 +764,7 @@ class RegexSymbol(Symbol):
             elif defn[c] == "\\":
                 # escape
                 if sym is not None:
-                    result.parts.append(sym.name)
+                    result.append(sym.name)
                 sym = TextSymbol(defn[c+1], line_no, grmr)
                 c += 2
             elif defn[c] == "+":
@@ -799,7 +793,7 @@ class RegexSymbol(Symbol):
             else:
                 # bare char
                 if sym is not None:
-                    result.parts.append(sym.name)
+                    result.append(sym.name)
                 sym = TextSymbol(defn[c], line_no, grmr)
                 c += 1
         raise ParseError("Unterminated regular expression", line_no)
