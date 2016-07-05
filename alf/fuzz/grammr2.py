@@ -303,11 +303,9 @@ class Grammar(object):
             log.debug("%s is %s with %d children", sym.name, type(sym).__name__, len(children))
             syms_used |= children
             to_check |= children - checked
-        if set(self.symtab.keys()) != syms_used:
-            unused_syms = tuple(set(self.symtab.keys()) - syms_used)
-            used_syms = tuple(syms_used)
-            raise IntegrityError("Unused symbol%s: %s, Used symbol%s: %s" % ("s" if len(unused_syms) > 1 else "", unused_syms,
-                                                                             "s" if len(used_syms) > 1 else "", used_syms))
+        if set(self.symtab) != syms_used:
+            unused_syms = tuple(set(self.symtab) - syms_used)
+            raise IntegrityError("Unused symbol%s: %s" % ("s" if len(unused_syms) > 1 else "", unused_syms))
 
     def is_limit_exceeded(self, length):
         return self._limit is not None and length >= self._limit
