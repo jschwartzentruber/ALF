@@ -306,6 +306,23 @@ class Grammar(object):
         if set(self.symtab) != syms_used:
             unused_syms = tuple(set(self.symtab) - syms_used)
             raise IntegrityError("Unused symbol%s: %s" % ("s" if len(unused_syms) > 1 else "", unused_syms))
+        # build paths to terminal symbols
+        cont = True
+        while cont:
+            cont = False
+            for s in self.symtab.values():
+                if s.can_terminate is None:
+                    if isinstance(s, ChoiceSymbol):
+                        for i, cs in enumerate(s.values):
+                            if all(self.symtab[c].can_terminate for c in cs):
+                                s._choices_terminate[i] = True
+                        if any(s._choices_terminate):
+                            s.can_terminate = True
+                            cont = True
+                    else:
+                        if all(self.symtab[c].can_terminate for c in s.children()):
+                            s.can_terminate = True
+                            cont = True
 
     def is_limit_exceeded(self, length):
         return self._limit is not None and length >= self._limit
@@ -436,6 +453,7 @@ class BinSymbol(Symbol):
         Symbol.__init__(self, name, line_no, grmr)
         self.value = binascii.unhexlify(value)
         log.debug("\tbin %s: %s", name, value)
+        self.can_terminate = True
 
     def generate(self, gstate):
         gstate.output.append(self.value)
@@ -470,6 +488,7 @@ class TextSymbol(Symbol):
         Symbol.__init__(self, name, line_no, grmr)
         self.value = value
         log.debug("\ttext %s: %s", name, value)
+        self.can_terminate = True
 
     def generate(self, gstate):
         gstate.output.append(self.value)
@@ -515,6 +534,7 @@ class ConcatSymbol(Symbol, list):
         Symbol.__init__(self, name, line_no, grmr)
         list.__init__(self)
         log.debug("\tconcat %s", name)
+        self.can_terminate = None
 
     def generate(self, gstate):
         gstate.symstack.extend(reversed(self))
@@ -535,14 +555,24 @@ class ChoiceSymbol(Symbol, WeightedChoice):
         Symbol.__init__(self, name, line_no, grmr)
         WeightedChoice.__init__(self)
         log.debug("\tchoice %s", name)
+        self.can_terminate = None
+        self._choices_terminate = []
 
     def append(self, value, weight, grmr):
         if len(value) == 1 and isinstance(grmr.symtab[value[0]], WeightedChoice):
             weight = grmr.symtab[value[0]].total
         WeightedChoice.append(self, value, weight)
+        self._choices_terminate.append(None)
 
     def generate(self, gstate):
-        gstate.symstack.extend(reversed(self.choice()))
+        if gstate.grmr.is_limit_exceeded(gstate.length) and self.can_terminate:
+            terminators = WeightedChoice()
+            for i in range(len(self.values)):
+                if self._choices_terminate[i]:
+                    terminators.append(self.values[i], self.weights[i])
+            gstate.symstack.extend(reversed(terminators.choice()))
+        else:
+            gstate.symstack.extend(reversed(self.choice()))
 
     def children(self):
         children = set()
@@ -558,6 +588,7 @@ class FuncSymbol(Symbol):
         Symbol.__init__(self, sname, line_no, grmr)
         self.fname = name
         self.args = []
+        self.can_terminate = None
 
     def generate(self, gstate):
         args = []
@@ -613,6 +644,7 @@ class RefSymbol(Symbol):
         self.ref = ref
         grmr.tracked.add(ref)
         log.debug("\tref %s", ref)
+        self.can_terminate = None
 
     def generate(self, gstate):
         if gstate.instances[self.ref]:
@@ -633,11 +665,15 @@ class RepeatSymbol(Symbol, list):
         list.__init__(self)
         self.a, self.b = a, b
         log.debug("\trepeat %s", name)
+        self.can_terminate = None
 
     def generate(self, gstate):
         if gstate.grmr.is_limit_exceeded(gstate.length):
-            return
-        n = random.randint(self.a, random.randint(self.a, self.b)) # roughly betavariate(0.75, 2.25)
+            if not self.can_terminate:
+                return # chop the output. this isn't great, but not much choice
+            n = self.a
+        else:
+            n = random.randint(self.a, random.randint(self.a, self.b)) # roughly betavariate(0.75, 2.25)
         gstate.symstack.extend(n * tuple(reversed(self)))
 
     def children(self):
@@ -657,6 +693,7 @@ class RegexSymbol(Symbol):
         self.parts = []
         self.n_implicit = 0
         log.debug("\tregex %s", name)
+        self.can_terminate = True
 
     def new_choice(self, grmr):
         name = "%s.%s]" % (self.name[:-1], self.n_implicit)
