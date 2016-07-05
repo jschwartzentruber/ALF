@@ -601,7 +601,10 @@ class FuncSymbol(Symbol):
                 astate.symstack = [arg]
                 astate.instances = gstate.instances
                 args.append(gstate.grmr.generate(astate))
-        gstate.output.append(gstate.grmr.funcs[self.fname](*args))
+        result = gstate.grmr.funcs[self.fname](*args)
+        if not isinstance(result, (str, unicode)):
+            raise GenerationError("Function %s returned type %s instead of str" % (self.name, type(result)))
+        gstate.output.append(result)
         gstate.length += len(gstate.output[-1])
 
     def children(self):
