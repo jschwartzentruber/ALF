@@ -299,18 +299,7 @@ class Grammar(object):
         while to_check:
             sym = self.symtab[to_check.pop()]
             checked.add(sym.name)
-            children = set()
-            if isinstance(sym, FuncSymbol):
-                children = set(a for a in sym.args if not isinstance(a, numbers.Number))
-            elif isinstance(sym, (ConcatSymbol, RepeatSymbol)):
-                children = set(sym)
-            elif isinstance(sym, ChoiceSymbol):
-                for child in sym.values:
-                    children |= set(child)
-            elif isinstance(sym, RegexSymbol):
-                children = set(sym.parts)
-            elif isinstance(sym, RefSymbol):
-                children = {sym.ref}
+            children = sym.children()
             log.debug("%s is %s with %d children", sym.name, type(sym).__name__, len(children))
             syms_used |= children
             to_check |= children - checked
@@ -379,6 +368,9 @@ class Symbol(object):
 
     def match(self, inp, ptr):
         return 0
+
+    def children(self):
+        return set()
 
     @staticmethod
     def _parse(defn, line_no, grmr, in_func):
@@ -529,6 +521,9 @@ class ConcatSymbol(Symbol, list):
     def generate(self, gstate):
         gstate.symstack.extend(reversed(self))
 
+    def children(self):
+        return set(self)
+
     @staticmethod
     def parse(name, defn, line_no, grmr):
         result = ConcatSymbol(name, line_no, grmr)
@@ -551,6 +546,12 @@ class ChoiceSymbol(Symbol, WeightedChoice):
     def generate(self, gstate):
         gstate.symstack.extend(reversed(self.choice()))
 
+    def children(self):
+        children = set()
+        for child in self.values:
+            children |= set(child)
+        return children
+
 
 class FuncSymbol(Symbol):
 
@@ -572,6 +573,9 @@ class FuncSymbol(Symbol):
                 args.append(gstate.grmr.generate(astate))
         gstate.output.append(gstate.grmr.funcs[self.fname](*args))
         gstate.length += len(gstate.output[-1])
+
+    def children(self):
+        return set(a for a in self.args if not isinstance(a, numbers.Number))
 
     @staticmethod
     def parse(name, defn, line_no, grmr):
@@ -620,6 +624,9 @@ class RefSymbol(Symbol):
             log.debug("No instances of %s yet, generating one instead of a reference", self.ref)
             gstate.grmr.symtab[self.ref].generate(gstate)
 
+    def children(self):
+        return {self.ref}
+
 
 class RepeatSymbol(Symbol, list):
 
@@ -634,6 +641,9 @@ class RepeatSymbol(Symbol, list):
             return
         n = random.randint(self.a, random.randint(self.a, self.b)) # roughly betavariate(0.75, 2.25)
         gstate.symstack.extend(n * tuple(reversed(self)))
+
+    def children(self):
+        return set(self)
 
 
 class RegexSymbol(Symbol):
@@ -664,6 +674,9 @@ class RegexSymbol(Symbol):
 
     def generate(self, gstate):
         gstate.symstack.extend(reversed(self.parts))
+
+    def children(self):
+        return set(self.parts)
 
     @staticmethod
     def parse(defn, line_no, grmr):
