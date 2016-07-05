@@ -48,7 +48,12 @@ if bool(os.getenv("DEBUG")):
 
 
 class GrammarException(Exception):
-    pass
+    def __str__(self):
+        if len(self.args) == 2:
+            return "%s (line %d)" % self.args
+        if len(self.args) == 1:
+            return str(self.args[0])
+        return str(self.args)
 class ParseError(GrammarException):
     pass
 class IntegrityError(GrammarException):
@@ -91,7 +96,7 @@ class WeightedChoice(object):
             target -= w
             if target < 0:
                 return v
-        raise GenerationError("Too much total weight? remainder is %0.2f from %0.2f total" % (target, self.total))
+        raise AssertionError("Too much total weight? remainder is %0.2f from %0.2f total" % (target, self.total))
 
     def __repr__(self):
         return "WeightedChoice(%s)" % tuple(zip(self.values, self.weights))
@@ -242,7 +247,7 @@ class Grammar(object):
             log.debug("parsing line # %d: %s", line_no, line.rstrip())
             m = Grammar._RE_LINE.match(ljoin + line)
             if m is None:
-                raise ParseError("Parse error on line %d" % line_no)
+                raise ParseError("Parse error", line_no)
             if m.group("broken") is not None:
                 ljoin = m.group("broken")
                 continue
@@ -271,21 +276,21 @@ class Grammar(object):
             else:
                 # continuation of choice
                 if sym is None or not isinstance(sym, ChoiceSymbol):
-                    raise ParseError("Unexpected continuation of choice symbol on line %d" % line_no)
-                weight = float(m.group("contweight")) if m.group("contweight") else 1
+                    raise ParseError("Unexpected continuation of choice symbol", line_no)
+                weight = float(m.group("contweight"))
                 sym.append(Symbol.parse(m.group("cont"), line_no, self), weight, self)
 
         # sanity check
         funcs_used = {"rndflt", "rndint"}
         for name, sym in self.symtab.items():
             if isinstance(sym, AbstractSymbol):
-                raise IntegrityError("Symbol %s used on line %d but not defined" % (name, sym.line_no))
+                raise IntegrityError("Symbol %s used but not defined" % name, sym.line_no)
             elif isinstance(sym, FuncSymbol):
                 if sym.fname not in self.funcs:
-                    raise IntegrityError("Function %s used on line %d but not defined" % (sym.fname, sym.line_no))
+                    raise IntegrityError("Function %s used but not defined" % sym.fname, sym.line_no)
                 funcs_used.add(sym.fname)
-        if set(self.funcs.keys()) != funcs_used:
-            unused_kwds = tuple(set(self.funcs.keys()) - funcs_used)
+        if set(self.funcs) != funcs_used:
+            unused_kwds = tuple(set(self.funcs) - funcs_used)
             raise IntegrityError("Unused keyword argument%s: %s" % ("s" if len(unused_kwds) > 1 else "", unused_kwds))
         syms_used = {"root"}
         to_check = {"root"}
@@ -332,11 +337,9 @@ class Grammar(object):
         while gstate.symstack:
             this = gstate.symstack.pop()
             if isinstance(this, tuple):
-                if this[0] != "untrack":
-                    raise GenerationError("TODO meaningful error message")
+                assert this[0] == "untrack", "Tracking mismatch: expected ('untrack', ...), got %r" % this
                 tracked = tracking.pop()
-                if this[1] != tracked[0]:
-                    raise GenerationError("TODO meaningful error message")
+                assert this[1] == tracked[0], "Tracking mismatch: expected '%s', got '%s'" % (tracked[0], this[1])
                 instance = "".join(gstate.output[tracked[1]:])
                 gstate.instances[this[1]].append(instance)
                 continue
@@ -367,11 +370,11 @@ class Symbol(object):
         self.line_no = line_no
         if grmr is not None:
             if name in grmr.symtab and not isinstance(grmr.symtab[name], (AbstractSymbol, RefSymbol)):
-                raise ParseError("Redefinition of symbol %s on line %d (previously declared on line %d)" % (name, line_no, grmr.symtab[name].line_no))
+                raise ParseError("Redefinition of symbol %s (line %d, previously declared on line %d)" % (name, line_no, grmr.symtab[name].line_no))
             grmr.symtab[name] = self
 
     def generate(self, gstate):
-        raise GenerationError("Can't generate symbol %s of type %s" % (self.name, type(self)))
+        raise GenerationError("Can't generate symbol %s of type %s" % (self.name, type(self)), self.line_no)
 
     def match(self, inp, ptr):
         return 0
@@ -382,7 +385,7 @@ class Symbol(object):
         while defn:
             m = Symbol._RE_DEFN.match(defn)
             if m is None:
-                raise ParseError("Failed to parse definition on line %d at: %s" % (line_no, defn))
+                raise ParseError("Failed to parse definition at: %s" % defn, line_no)
             log.debug("parsed %s from %s", {k: v for k, v in m.groupdict().items() if v is not None}, defn)
             if m.group("ws") is not None:
                 defn = defn[m.end(0):]
@@ -410,7 +413,7 @@ class Symbol(object):
                 break
             elif m.group("infunc"):
                 if not in_func:
-                    raise ParseError("Unexpected token in definition on line %d at: %s" % (line_no, defn))
+                    raise ParseError("Unexpected token in definition: %s" % defn, line_no)
                 break
             result.append(sym.name)
         return result, defn
@@ -423,7 +426,7 @@ class Symbol(object):
     def parse(defn, line_no, grmr):
         res, remain = Symbol._parse(defn, line_no, grmr, False)
         if remain:
-            raise ParseError("TODO meaningful error message")
+            raise ParseError("Unexpected token in definition: %s" % remain, line_no)
         return res
 
 
@@ -457,12 +460,12 @@ class BinSymbol(Symbol):
     def parse(defn, line_no, grmr):
         x, qchar, defn = defn[0], defn[1], defn[2:]
         if x != "x":
-            raise ParseError("TODO meaningful error message")
+            raise ParseError("Error parsing binary string at: %s%s%s" % (x, qchar, defn), line_no)
         if qchar not in "'\"":
-            raise ParseError("TODO meaningful error message")
+            raise ParseError("Error parsing binary string at: %s%s" % (qchar, defn), line_no)
         enquo = defn.find(qchar)
         if enquo == -1:
-            raise ParseError("Unterminated bin literal!")
+            raise ParseError("Unterminated bin literal!", line_no)
         value, defn = defn[:enquo], defn[enquo+1:]
         sym = BinSymbol(value, line_no, grmr)
         return sym, defn
@@ -491,7 +494,7 @@ class TextSymbol(Symbol):
     def parse(defn, line_no, grmr):
         qchar, defn = defn[0], defn[1:]
         if qchar not in "'\"":
-            raise ParseError("TODO meaningful error message")
+            raise ParseError("Error parsing string at: %s%s" % (qchar, defn), line_no)
         out, last = [], 0
         for m in TextSymbol._RE_QUOTE.finditer(defn):
             out.append(defn[last:m.start(0)])
@@ -509,7 +512,7 @@ class TextSymbol(Symbol):
                 except KeyError:
                     out.append(m.group("esc"))
         else:
-            raise ParseError("Unterminated string literal!")
+            raise ParseError("Unterminated string literal!", line_no)
         defn = defn[last:]
         sym = TextSymbol("".join(out), line_no, grmr)
         return sym, defn
@@ -573,7 +576,7 @@ class FuncSymbol(Symbol):
         while not done:
             arg, defn = Symbol.parse_func_arg(defn, line_no, grmr)
             if defn[0] not in ",)":
-                raise ParseError("TODO meaningful error message")
+                raise ParseError("Expected , or ) parsing function args at: %s" % defn, line_no)
             done = defn[0] == ")"
             defn = defn[1:]
             if arg or not done:
@@ -652,7 +655,7 @@ class RegexSymbol(Symbol):
         c = 1
         sym = None
         if defn[0] != "/":
-            raise ParseError("TODO meaningful error message")
+            raise ParseError("Regex definitions must begin with /", line_no)
         while c < len(defn):
             if defn[c] == "/":
                 if sym is not None:
@@ -708,22 +711,22 @@ class RegexSymbol(Symbol):
                 c += 2
             elif defn[c] == "+":
                 if sym is None:
-                    raise ParseError("TODO meaningful error message")
+                    raise ParseError("Error parsing regex, unexpected + at: %s" % defn[c:], line_no)
                 c += 1
                 result.add_repeat(sym, 1, 5, grmr)
                 sym = None
             elif defn[c] == "*":
                 if sym is None:
-                    raise ParseError("TODO meaningful error message")
+                    raise ParseError("Error parsing regex, unexpected * at: %s" % defn[c:], line_no)
                 result.add_repeat(sym, 0, 5, grmr)
                 c += 1
                 sym = None
             elif defn[c] == "{":
                 if sym is None:
-                    raise ParseError("TODO meaningful error message")
+                    raise ParseError("Error parsing regex, unexpected { at: %s" % defn[c:], line_no)
                 m = RegexSymbol._RE_REPEAT.match(defn[c:])
                 if m is None:
-                    raise ParseError("TODO meaningful error message")
+                    raise ParseError("Error parsing regex, expecting {n} or {a,b} at: %s" % defn[c:], line_no)
                 a = int(m.group("a"))
                 b = int(m.group("b")) if m.group("b") else a
                 result.add_repeat(sym, a, b, grmr)
@@ -735,7 +738,7 @@ class RegexSymbol(Symbol):
                     result.parts.append(sym.name)
                 sym = TextSymbol(defn[c], line_no, grmr)
                 c += 1
-        raise ParseError("Unterminated regular expression")
+        raise ParseError("Unterminated regular expression", line_no)
 
 
 if __name__ == "__main__":
