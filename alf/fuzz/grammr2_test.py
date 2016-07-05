@@ -60,10 +60,10 @@ class GrammarTests(unittest.TestCase):
     def test_funcs(self):
         iters = 10
         gram = "root    {1,10}  func\n" \
-               "func    |       'z' zero(nuvar) '\\n'\n" \
-               "        |       'a' alpha(alvar , '*,' rep) '\\n'\n" \
-               "        |       nuvar '\\n'\n" \
-               "        |       alvar '\\n'\n" \
+               "func    1       'z' zero(nuvar) '\\n'\n" \
+               "        1       'a' alpha(alvar , '*,' rep) '\\n'\n" \
+               "        1       nuvar '\\n'\n" \
+               "        1       alvar '\\n'\n" \
                "nuvar           'n' /[0-9]{6}/\n" \
                "alvar           'c' /[a-z]{6}/\n" \
                "rep             /[0-9]/"
@@ -87,34 +87,14 @@ class GrammarTests(unittest.TestCase):
                 else:
                     raise Exception("unexpected line: %s" % line)
 
-    def test_plus(self):
-        iters = 10000
-        gram = "var     | 'a'\n" \
-               "        | 'b'\n" \
-               "        | 'c'\n" \
-               "root    | var\n" \
-               "        | 'd'"
-        w = Grammar(gram)
-        r = {'a':0, 'b':0, 'c':0, 'd':0}
-        i = 0
-        while i < iters:
-            i += 1
-            v = w.generate()
-            r[v] += 1
-        #for v in "abc":
-        #    self.assertAlmostEqual(r[v]/iters, 1/6, delta=0.03)
-        #self.assertAlmostEqual(r['d']/iters, 0.5, delta=0.03)
-        for v in r.values():
-            self.assertAlmostEqual(1.0*v/iters, 0.25, delta=0.03)
-
     def test_basic(self):
         w = Grammar("root    ok\n"
                     "ok      '1'")
         self.assertEqual(w.generate(), "1")
         w = Grammar("root   a\n"
                     "a      '1234' /[a-z]/ b\n"
-                    "b      | c\n"
-                    "       | d\n"
+                    "b      1 c\n"
+                    "       1 d\n"
                     "c      'C'\n"
                     "d      'D'")
         r = {"C": 0, "D": 0}

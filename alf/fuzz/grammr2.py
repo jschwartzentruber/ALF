@@ -225,8 +225,8 @@ class Grammar(object):
                            ^(?P<broken>.*)\\$ |
                            ^\s*(?P<comment>\#).*$ |
                            ^(?P<nothing>\s*)$ |
-                           ^(?P<name>[\w-]+)(?P<type>\s*((?P<weight>[\d.]+)|\||\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\})\s*|\s+)(?P<def>.+)$ |
-                           ^\s+(\||(?P<contweight>[\d.]+))\s*(?P<cont>.+)$
+                           ^(?P<name>[\w-]+)(?P<type>\s*((?P<weight>[\d.]+)|\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\})\s*|\s+)(?P<def>.+)$ |
+                           ^\s+((?P<contweight>[\d.]+))\s*(?P<cont>.+)$
                            """, re.VERBOSE)
 
     def __init__(self, grammar="", limit=DEFAULT_LIMIT, **kwargs):
@@ -258,9 +258,9 @@ class Grammar(object):
             if m.group("name"):
                 sym_name, sym_type, sym_def = m.group("name", "type", "def")
                 sym_type = sym_type.lstrip()
-                if sym_type.startswith("|") or m.group("weight"):
+                if m.group("weight"):
                     # choice
-                    weight = float(m.group("weight")) if m.group("weight") else 1
+                    weight = float(m.group("weight"))
                     sym = ChoiceSymbol(sym_name, line_no, self)
                     sym.append(Symbol.parse(sym_def, line_no, self), weight, self)
                 elif sym_type.startswith("{"):
