@@ -200,6 +200,15 @@ class Grammar(object):
 
         A random integer between ``a`` and ``b`` inclusive.
 
+    **Random integer near power of 2**
+
+            ::
+
+                SymbolName      rndpow2(base_limit, variation)
+
+        This function is intended to return edge values around powers of 2. It is equivalent to:
+        ``pow(2, rndint(0, base_limit)) + rndint(-variation, variation)``
+
     **Reference**:
 
             ::
@@ -238,6 +247,8 @@ class Grammar(object):
         self.funcs = kwargs
         if "rndint" not in self.funcs:
             self.funcs["rndint"] = lambda a, b: str(random.randint(int(a), int(b)))
+        if "rndpow2" not in self.funcs:
+            self.funcs["rndpow2"] = lambda a, b: str(random.randint(0, int(a)) + random.randint(-int(b), int(b)))
         if "rndflt" not in self.funcs:
             self.funcs["rndflt"] = lambda a, b: str(random.uniform(float(a), float(b)))
         if not isinstance(grammar, io.IOBase):
@@ -282,7 +293,7 @@ class Grammar(object):
                 sym.append(Symbol.parse(m.group("cont"), line_no, self), weight, self)
 
         # sanity check
-        funcs_used = {"rndflt", "rndint"}
+        funcs_used = {"rndflt", "rndint", "rndpow2"}
         for name, sym in self.symtab.items():
             if isinstance(sym, AbstractSymbol):
                 raise IntegrityError("Symbol %s used but not defined" % name, sym.line_no)
