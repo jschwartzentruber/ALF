@@ -271,5 +271,15 @@ class GrammarTests(unittest.TestCase):
         self.assertGreaterEqual(float(w.generate()), 1)
         self.assertLessEqual(float(w.generate()), 10)
 
+    def test_nested_choice_weight(self):
+        w = Grammar("root {1000} a\n"
+                    "b 9 'b'\n"
+                    "a 1 'a'\n"
+                    "  1 b")
+        o = w.generate()
+        a_count = len([c for c in o if c == 'a'])
+        b_count = len(o) - a_count
+        self.assertAlmostEqual(a_count, b_count, delta=len(o) * 0.2)
+
 suite = unittest.TestLoader().loadTestsFromTestCase(GrammarTests)
 

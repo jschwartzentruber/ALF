@@ -571,8 +571,6 @@ class ChoiceSymbol(Symbol, WeightedChoice):
         self._choices_terminate = []
 
     def append(self, value, weight, grmr):
-        if len(value) == 1 and isinstance(grmr.symtab[value[0]], WeightedChoice):
-            weight = grmr.symtab[value[0]].total
         WeightedChoice.append(self, value, weight)
         self._choices_terminate.append(None)
 
