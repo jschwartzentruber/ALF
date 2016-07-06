@@ -204,10 +204,10 @@ class Grammar(object):
 
             ::
 
-                SymbolName      rndpow2(base_limit, variation)
+                SymbolName      rndpow2(exponent_limit, variation)
 
         This function is intended to return edge values around powers of 2. It is equivalent to:
-        ``pow(2, rndint(0, base_limit)) + rndint(-variation, variation)``
+        ``pow(2, rndint(0, exponent_limit)) + rndint(-variation, variation)``
 
     **Reference**:
 
@@ -248,7 +248,7 @@ class Grammar(object):
         if "rndint" not in self.funcs:
             self.funcs["rndint"] = lambda a, b: str(random.randint(int(a), int(b)))
         if "rndpow2" not in self.funcs:
-            self.funcs["rndpow2"] = lambda a, b: str(random.randint(0, int(a)) + random.randint(-int(b), int(b)))
+            self.funcs["rndpow2"] = lambda a, b: str(2 ** random.randint(0, int(a)) + random.randint(-int(b), int(b)))
         if "rndflt" not in self.funcs:
             self.funcs["rndflt"] = lambda a, b: str(random.uniform(float(a), float(b)))
         if not isinstance(grammar, io.IOBase):
