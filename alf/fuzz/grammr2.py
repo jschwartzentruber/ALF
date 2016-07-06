@@ -100,7 +100,7 @@ class WeightedChoice(object):
         raise AssertionError("Too much total weight? remainder is %0.2f from %0.2f total" % (target, self.total))
 
     def __repr__(self):
-        return "WeightedChoice(%s)" % tuple(zip(self.values, self.weights))
+        return "WeightedChoice(%s)" % list(zip(self.values, self.weights))
 
 
 class Grammar(object):
