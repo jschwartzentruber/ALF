@@ -16,8 +16,11 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 ################################################################################
-from grammr2 import Grammar, WeightedChoice, ParseError
+from grammr2 import Grammar, WeightedChoice, ParseError, IntegrityError
+import os
 import re
+import shutil
+import tempfile
 import unittest
 
 class GrammarTests(unittest.TestCase):
@@ -281,5 +284,50 @@ class GrammarTests(unittest.TestCase):
         b_count = len(o) - a_count
         self.assertAlmostEqual(a_count, b_count, delta=len(o) * 0.2)
 
-suite = unittest.TestLoader().loadTestsFromTestCase(GrammarTests)
+
+class GrammarImportTests(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpd = tempfile.mkdtemp(prefix='gmrtesttmp')
+        self.cwd = os.getcwd()
+        os.chdir(self.tmpd)
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        shutil.rmtree(self.tmpd)
+
+    #def test_unused_import(self):
+    #    open('blah.gmr', 'w').close()
+    #    with self.assertRaisesRegexp(IntegrityError, r'^Unused imported grammar'):
+    #        w = Grammar("root 'a'\n"
+    #                    "unused import 'blah.gmr'")
+
+    def test_use_before_import(self):
+        with self.assertRaisesRegexp(ParseError, r'^Attempt to use symbol from unknown prefix'):
+            w = Grammar("root a.b")
+
+    def test_notfound_import(self):
+        with self.assertRaisesRegexp(IntegrityError, r'^Could not find imported grammar'):
+            w = Grammar("a import ''")
+
+    def test_simple(self):
+        with open('a.gmr', 'w') as g:
+            g.write('a "A"')
+        w = Grammar("b import 'a.gmr'\n"
+                    "root b.a")
+        self.assertEqual(w.generate(), 'A')
+
+    def test_nested(self):
+        with open('a.gmr', 'w') as g:
+            g.write('b import "b.gmr"\n'
+                    'root a b.a\n'
+                    'a "A"')
+        with open('b.gmr', 'w') as g:
+            g.write('a import "a.gmr"\n'
+                    'a @a.a')
+        w = Grammar(open('a.gmr'))
+        self.assertEqual(w.generate(), "AA")
+
+
+suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(t) for t in (GrammarTests, GrammarImportTests))
 

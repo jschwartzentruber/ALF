@@ -34,8 +34,9 @@
 ################################################################################
 
 import binascii
-import logging as log
+import hashlib
 import io
+import logging as log
 import numbers
 import os
 import random
@@ -234,12 +235,11 @@ class Grammar(object):
                            ^(?P<broken>.*)\\$ |
                            ^\s*(?P<comment>\#).*$ |
                            ^(?P<nothing>\s*)$ |
-                           ^(?P<name>[\w-]+)(?P<type>\s*((?P<weight>[\d.]+)|\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\})\s*|\s+)(?P<def>.+)$ |
+                           ^(?P<name>[\w-]+)(?P<type>\s*((?P<weight>[\d.]+)|\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\}|import)\s*|\s+)(?P<def>.+)$ |
                            ^\s+((?P<contweight>[\d.]+))\s*(?P<cont>.+)$
                            """, re.VERBOSE)
 
     def __init__(self, grammar="", limit=DEFAULT_LIMIT, **kwargs):
-        sym = None
         self._limit = limit
         self._start = None
         self.symtab = {}
@@ -251,8 +251,29 @@ class Grammar(object):
             self.funcs["rndpow2"] = lambda a, b: str(2 ** random.randint(0, int(a)) + random.randint(-int(b), int(b)))
         if "rndflt" not in self.funcs:
             self.funcs["rndflt"] = lambda a, b: str(random.uniform(float(a), float(b)))
-        if not isinstance(grammar, io.IOBase):
+
+        # initial definitions use hash of the grammar as the prefix, keeping track of the first used friendly name ("" for top level)
+        # when grammar and imports are fully parsed, do a final pass to rename hash prefixes to friendly prefixes
+        # sanity checking should ignore unused prefixed symbols, but not unused prefixes. (TODO)
+
+        self.parse(grammar)
+
+    def parse(self, grammar, prefix="", imports=None):
+        if not isinstance(grammar, (file, io.IOBase)):
             grammar = io.StringIO(grammar.decode() if isinstance(grammar, bytes) else grammar)
+            grammar_fn = None
+        else:
+            grammar_fn = getattr(grammar, "name", None)
+        grammar_hash = hashlib.sha224(grammar.read()).hexdigest()
+        if imports is None:
+            imports = {} # hash -> friendly prefix
+        if grammar_hash in imports:
+            return grammar_hash
+        imports[grammar_hash] = prefix
+        my_imports = {}
+        grammar.seek(0)
+
+        sym = None
         ljoin = ""
         for line_no, line in enumerate(grammar, 1):
             self.n_implicit = -1
@@ -272,25 +293,83 @@ class Grammar(object):
                 if m.group("weight"):
                     # choice
                     weight = float(m.group("weight"))
-                    sym = ChoiceSymbol(sym_name, line_no, self)
-                    sym.append(Symbol.parse(sym_def, line_no, self), weight, self)
+                    sym = ChoiceSymbol(grammar_hash, sym_name, line_no, self)
+                    sym.append(Symbol.parse(grammar_hash, my_imports, sym_def, line_no, self), weight)
                 elif sym_type.startswith("{"):
                     # repeat
                     a, b = m.group("a", "b")
                     a = int(a)
                     b = int(b) if b else a
-                    sym = RepeatSymbol(sym_name, a, b, line_no, self)
-                    sym.extend(Symbol.parse(sym_def, line_no, self))
+                    sym = RepeatSymbol(grammar_hash, sym_name, a, b, line_no, self)
+                    sym.extend(Symbol.parse(grammar_hash, my_imports, sym_def, line_no, self))
+                elif sym_type.startswith("import"):
+                    sym, defn = TextSymbol.parse(None, imports, sym_def, line_no, None)
+                    defn = defn.strip()
+                    if defn.startswith("#") or defn:
+                        raise IntegrityError("Unexpected input following import: %s" % defn, line_no)
+                    # resolve sym.value from current grammar path or "."
+                    if grammar_fn is not None:
+                        import_paths = [os.path.join(os.path.dirname(grammar_fn), sym.value), sym.value]
+                    else:
+                        import_paths = [sym.value]
+                    for import_fn in import_paths:
+                        try:
+                            with open(import_fn) as g:
+                                my_imports[sym_name] = self.parse(g, prefix=sym_name, imports=imports)
+                            break
+                        except IOError:
+                            pass
+                    else:
+                        raise IntegrityError("Could not find imported grammar: %s" % sym.value, line_no)
                 else:
                     # sym def
-                    sym = ConcatSymbol.parse(sym_name, sym_def, line_no, self)
-                self.symtab[sym_name] = sym
+                    sym = ConcatSymbol.parse(grammar_hash, my_imports, sym_name, sym_def, line_no, self)
             else:
                 # continuation of choice
                 if sym is None or not isinstance(sym, ChoiceSymbol):
                     raise ParseError("Unexpected continuation of choice symbol", line_no)
                 weight = float(m.group("contweight"))
-                sym.append(Symbol.parse(m.group("cont"), line_no, self), weight, self)
+                sym.append(Symbol.parse(grammar_hash, my_imports, m.group("cont"), line_no, self), weight)
+
+        if prefix:
+            # no sanity check until we're done all imports
+            return grammar_hash
+
+        def reprefix(symname):
+            try:
+                prefix, name = symname.split(".", 1)
+            except ValueError:
+                return symname
+            ref = prefix.startswith("@")
+            if ref:
+                prefix = prefix[1:]
+            try:
+                newprefix = imports[prefix]
+            except KeyError:
+                raise ParseError("Failed to reassign %s to proper namespace after parsing" % symname)
+            return "%s%s%s%s" % ("@" if ref else "", newprefix, "." if newprefix else "", name)
+
+        # rename prefixes to friendly names
+        for oldname in list(self.symtab):
+            sym = self.symtab[oldname]
+            assert oldname == sym.name
+            newname = reprefix(oldname)
+            if oldname != newname:
+                sym.name = newname
+                self.symtab[newname] = sym
+                del self.symtab[oldname]
+            if isinstance(sym, WeightedChoice):
+                sym.values = map(lambda x: map(reprefix, x), sym.values)
+            elif isinstance(sym, list):
+                for i in range(len(sym)):
+                    sym[i] = reprefix(sym[i])
+            elif isinstance(sym, RefSymbol):
+                sym.ref = reprefix(sym.ref)
+            elif isinstance(sym, FuncSymbol):
+                for i in range(len(sym.args)):
+                    if not isinstance(sym.args[i], numbers.Number):
+                        sym.args[i] = reprefix(sym.args[i])
+        self.tracked = {reprefix(t) for t in self.tracked}
 
         # sanity check
         funcs_used = {"rndflt", "rndint", "rndpow2"}
@@ -377,8 +456,8 @@ class Symbol(object):
                            ^(?P<infunc>[,)]) |
                            ^(?P<comment>\#).* |
                            ^(?P<func>\w+)\( |
-                           ^@(?P<ref>[\w-]+) |
-                           ^(?P<sym>[\w-]+) |
+                           ^@(?P<refprefix>[\w-]+\.)?(?P<ref>[\w-]+) |
+                           ^(?P<symprefix>[\w-]+\.)?(?P<sym>[\w-]+) |
                            ^(?P<ws>\s+)""", re.VERBOSE)
 
     def __init__(self, name, line_no, grmr=None):
@@ -399,7 +478,19 @@ class Symbol(object):
         return set()
 
     @staticmethod
-    def _parse(defn, line_no, grmr, in_func):
+    def _parse(prefix, imports, defn, line_no, grmr, in_func):
+
+        def get_prefixed(symprefix, sym):
+            if symprefix:
+                symprefix = symprefix[:-1]
+                try:
+                    symprefix = imports[symprefix]
+                except KeyError:
+                    raise ParseError("Attempt to use symbol from unknown prefix: %s" % symprefix, line_no)
+            else:
+                symprefix = prefix
+            return "%s.%s" % (symprefix, sym)
+
         result = []
         while defn:
             m = Symbol._RE_DEFN.match(defn)
@@ -410,22 +501,24 @@ class Symbol(object):
                 defn = defn[m.end(0):]
                 continue
             if m.group("quote"):
-                sym, defn = TextSymbol.parse(defn, line_no, grmr)
+                sym, defn = TextSymbol.parse(prefix, imports, defn, line_no, grmr)
             elif m.group("hexstr"):
-                sym, defn = BinSymbol.parse(defn, line_no, grmr)
+                sym, defn = BinSymbol.parse(prefix, imports, defn, line_no, grmr)
             elif m.group("regex"):
-                sym, defn = RegexSymbol.parse(defn, line_no, grmr)
+                sym, defn = RegexSymbol.parse(prefix, imports, defn, line_no, grmr)
             elif m.group("func"):
                 defn = defn[m.end(0):]
-                sym, defn = FuncSymbol.parse(m.group("func"), defn, line_no, grmr)
+                sym, defn = FuncSymbol.parse(prefix, imports, m.group("func"), defn, line_no, grmr)
             elif m.group("ref"):
-                sym = RefSymbol(m.group("ref"), line_no, grmr)
+                ref = get_prefixed(m.group("refprefix"), m.group("ref"))
+                sym = RefSymbol(ref, line_no, grmr)
                 defn = defn[m.end(0):]
             elif m.group("sym"):
+                sym_name = get_prefixed(m.group("symprefix"), m.group("sym"))
                 try:
-                    sym = grmr.symtab[m.group("sym")]
+                    sym = grmr.symtab[sym_name]
                 except KeyError:
-                    sym = AbstractSymbol(m.group("sym"), line_no, grmr)
+                    sym = AbstractSymbol(sym_name, line_no, grmr)
                 defn = defn[m.end(0):]
             elif m.group("comment"):
                 defn = ""
@@ -438,12 +531,12 @@ class Symbol(object):
         return result, defn
 
     @staticmethod
-    def parse_func_arg(defn, line_no, grmr):
-        return Symbol._parse(defn, line_no, grmr, True)
+    def parse_func_arg(prefix, imports, defn, line_no, grmr):
+        return Symbol._parse(prefix, imports, defn, line_no, grmr, True)
 
     @staticmethod
-    def parse(defn, line_no, grmr):
-        res, remain = Symbol._parse(defn, line_no, grmr, False)
+    def parse(prefix, imports, defn, line_no, grmr):
+        res, remain = Symbol._parse(prefix, imports, defn, line_no, grmr, False)
         if remain:
             raise ParseError("Unexpected token in definition: %s" % remain, line_no)
         return res
@@ -459,8 +552,8 @@ class AbstractSymbol(Symbol):
 class BinSymbol(Symbol):
     _RE_QUOTE = re.compile(r'''(?P<end>["'])''')
 
-    def __init__(self, value, line_no, grmr):
-        name = "[bin (line %d #%d)]" % (line_no, grmr.implicit())
+    def __init__(self, prefix, value, line_no, grmr):
+        name = "%s.[bin (line %d #%d)]" % (prefix, line_no, grmr.implicit())
         Symbol.__init__(self, name, line_no, grmr)
         self.value = binascii.unhexlify(value)
         log.debug("\tbin %s: %s", name, value)
@@ -477,7 +570,7 @@ class BinSymbol(Symbol):
         return 0
 
     @staticmethod
-    def parse(defn, line_no, grmr):
+    def parse(prefix, imports, defn, line_no, grmr):
         x, qchar, defn = defn[0], defn[1], defn[2:]
         if x != "x":
             raise ParseError("Error parsing binary string at: %s%s%s" % (x, qchar, defn), line_no)
@@ -487,15 +580,16 @@ class BinSymbol(Symbol):
         if enquo == -1:
             raise ParseError("Unterminated bin literal!", line_no)
         value, defn = defn[:enquo], defn[enquo+1:]
-        sym = BinSymbol(value, line_no, grmr)
+        sym = BinSymbol(prefix, value, line_no, grmr)
         return sym, defn
 
 
 class TextSymbol(Symbol):
     _RE_QUOTE = re.compile(r'''(?P<end>["'])|\\(?P<esc>.)''')
 
-    def __init__(self, value, line_no, grmr):
-        name = "[text (line %d #%d)]" % (line_no, grmr.implicit())
+    def __init__(self, prefix, value, line_no, grmr):
+        name = "[text (line %d #%d)]" % (line_no, grmr.implicit() if grmr is not None else -1)
+        name = "%s.%s" % (prefix, name) if prefix is not None else name
         Symbol.__init__(self, name, line_no, grmr)
         self.value = value
         log.debug("\ttext %s: %s", name, value)
@@ -512,10 +606,10 @@ class TextSymbol(Symbol):
         return 0
 
     @staticmethod
-    def parse(defn, line_no, grmr):
+    def parse(prefix, imports, defn, line_no, grmr):
         qchar, defn = defn[0], defn[1:]
         if qchar not in "'\"":
-            raise ParseError("Error parsing string at: %s%s" % (qchar, defn), line_no)
+            raise ParseError("Error parsing string, expected \" or ' at: %s%s" % (qchar, defn), line_no)
         out, last = [], 0
         for m in TextSymbol._RE_QUOTE.finditer(defn):
             out.append(defn[last:m.start(0)])
@@ -535,13 +629,14 @@ class TextSymbol(Symbol):
         else:
             raise ParseError("Unterminated string literal!", line_no)
         defn = defn[last:]
-        sym = TextSymbol("".join(out), line_no, grmr)
+        sym = TextSymbol(prefix, "".join(out), line_no, grmr)
         return sym, defn
 
 
 class ConcatSymbol(Symbol, list):
 
-    def __init__(self, name, line_no, grmr):
+    def __init__(self, prefix, name, line_no, grmr):
+        name = "%s.%s" % (prefix, name) if prefix is not None else name
         Symbol.__init__(self, name, line_no, grmr)
         list.__init__(self)
         if type(self) == ConcatSymbol:
@@ -555,22 +650,23 @@ class ConcatSymbol(Symbol, list):
         return set(self)
 
     @staticmethod
-    def parse(name, defn, line_no, grmr):
-        result = ConcatSymbol(name, line_no, grmr)
-        result.extend(Symbol.parse(defn, line_no, grmr))
+    def parse(prefix, imports, name, defn, line_no, grmr):
+        result = ConcatSymbol(prefix, name, line_no, grmr)
+        result.extend(Symbol.parse(prefix, imports, defn, line_no, grmr))
         return result
 
 
 class ChoiceSymbol(Symbol, WeightedChoice):
 
-    def __init__(self, name, line_no, grmr):
+    def __init__(self, prefix, name, line_no, grmr):
+        name = "%s.%s" % (prefix, name) if prefix is not None else name
         Symbol.__init__(self, name, line_no, grmr)
         WeightedChoice.__init__(self)
         log.debug("\tchoice %s", name)
         self.can_terminate = None
         self._choices_terminate = []
 
-    def append(self, value, weight, grmr):
+    def append(self, value, weight):
         WeightedChoice.append(self, value, weight)
         self._choices_terminate.append(None)
 
@@ -593,8 +689,8 @@ class ChoiceSymbol(Symbol, WeightedChoice):
 
 class FuncSymbol(Symbol):
 
-    def __init__(self, name, line_no, grmr):
-        sname = "[%s (line %d #%d)]" % (name, line_no, grmr.implicit())
+    def __init__(self, prefix, name, line_no, grmr):
+        sname = "%s.[%s (line %d #%d)]" % (prefix, name, line_no, grmr.implicit())
         Symbol.__init__(self, sname, line_no, grmr)
         self.fname = name
         self.args = []
@@ -620,11 +716,11 @@ class FuncSymbol(Symbol):
         return set(a for a in self.args if not isinstance(a, numbers.Number))
 
     @staticmethod
-    def parse(name, defn, line_no, grmr):
-        result = FuncSymbol(name, line_no, grmr)
+    def parse(prefix, imports, name, defn, line_no, grmr):
+        result = FuncSymbol(prefix, name, line_no, grmr)
         done = False
         while not done:
-            arg, defn = Symbol.parse_func_arg(defn, line_no, grmr)
+            arg, defn = Symbol.parse_func_arg(prefix, imports, defn, line_no, grmr)
             if defn[0] not in ",)":
                 raise ParseError("Expected , or ) parsing function args at: %s" % defn, line_no)
             done = defn[0] == ")"
@@ -632,9 +728,10 @@ class FuncSymbol(Symbol):
             if arg or not done:
                 numeric_arg = False
                 if len(arg) == 1 and isinstance(grmr.symtab[arg[0]], AbstractSymbol):
+                    arg0 = arg[0].split(".", 1)[1]
                     for numtype in (int, float):
                         try:
-                            value = numtype(arg[0])
+                            value = numtype(arg0)
                             result.args.append(value)
                             del grmr.symtab[arg[0]]
                             numeric_arg = True
@@ -642,7 +739,7 @@ class FuncSymbol(Symbol):
                         except ValueError:
                             pass
                 if not numeric_arg:
-                    sym = ConcatSymbol("%s.%s]" % (result.name[:-1], len(result.args)), line_no, grmr)
+                    sym = ConcatSymbol(None, "%s.%s]" % (result.name[:-1], len(result.args)), line_no, grmr)
                     sym.extend(arg)
                     result.args.append(sym.name)
         return result, defn
@@ -673,7 +770,8 @@ class RefSymbol(Symbol):
 
 class RepeatSymbol(Symbol, list):
 
-    def __init__(self, name, a, b, line_no, grmr):
+    def __init__(self, prefix, name, a, b, line_no, grmr):
+        name = "%s.%s" % (prefix, name) if prefix is not None else name
         Symbol.__init__(self, name, line_no, grmr)
         list.__init__(self)
         self.a, self.b = a, b
@@ -700,9 +798,9 @@ class RegexSymbol(ConcatSymbol):
                       ",./<>?;':\"[]\\{}|=_+`~!@#$%^&*() -"
     _RE_REPEAT = re.compile(r"^\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\}")
 
-    def __init__(self, line_no, grmr):
-        name = "[regex (line %d #%d)]" % (line_no, grmr.implicit())
-        ConcatSymbol.__init__(self, name, line_no, grmr)
+    def __init__(self, prefix, line_no, grmr):
+        name = "%s.[regex (line %d #%d)]" % (prefix, line_no, grmr.implicit())
+        ConcatSymbol.__init__(self, None, name, line_no, grmr)
         self.n_implicit = 0
         log.debug("\tregex %s", name)
         self.can_terminate = True
@@ -710,18 +808,18 @@ class RegexSymbol(ConcatSymbol):
     def new_choice(self, grmr):
         name = "%s.%s]" % (self.name[:-1], self.n_implicit)
         self.n_implicit += 1
-        return ChoiceSymbol(name, self.line_no, grmr)
+        return ChoiceSymbol(None, name, self.line_no, grmr)
 
     def add_repeat(self, sym, a, b, grmr):
         name = "%s.%s]" % (self.name[:-1], self.n_implicit)
         self.n_implicit += 1
-        rep = RepeatSymbol(name, a, b, self.line_no, grmr)
+        rep = RepeatSymbol(None, name, a, b, self.line_no, grmr)
         rep.append(sym.name)
         self.append(name)
 
     @staticmethod
-    def parse(defn, line_no, grmr):
-        result = RegexSymbol(line_no, grmr)
+    def parse(prefix, imports, defn, line_no, grmr):
+        result = RegexSymbol(prefix, line_no, grmr)
         c = 1
         sym = None
         if defn[0] != "/":
@@ -761,7 +859,7 @@ class RegexSymbol(ConcatSymbol):
                 if inverse:
                     alpha = set(RegexSymbol._REGEX_ALPHABET) - alpha
                 for s in alpha:
-                    sym.append([TextSymbol(s, line_no, grmr).name], 1, grmr)
+                    sym.append([TextSymbol(prefix, s, line_no, grmr).name], 1)
             elif defn[c] == ".":
                 # any one thing
                 if sym is not None:
@@ -770,14 +868,14 @@ class RegexSymbol(ConcatSymbol):
                 try:
                     sym = grmr.symtab["[regex alpha]"]
                 except KeyError:
-                    sym = ChoiceSymbol("[regex alpha]", 0, grmr)
+                    sym = ChoiceSymbol(None, "[regex alpha]", 0, grmr)
                     for s in RegexSymbol._REGEX_ALPHABET:
-                        sym.append([TextSymbol(s, 0, grmr).name], 1, grmr)
+                        sym.append([TextSymbol(None, s, 0, grmr).name], 1)
             elif defn[c] == "\\":
                 # escape
                 if sym is not None:
                     result.append(sym.name)
-                sym = TextSymbol(defn[c+1], line_no, grmr)
+                sym = TextSymbol(prefix, defn[c+1], line_no, grmr)
                 c += 2
             elif defn[c] == "+":
                 if sym is None:
@@ -806,7 +904,7 @@ class RegexSymbol(ConcatSymbol):
                 # bare char
                 if sym is not None:
                     result.append(sym.name)
-                sym = TextSymbol(defn[c], line_no, grmr)
+                sym = TextSymbol(prefix, defn[c], line_no, grmr)
                 c += 1
         raise ParseError("Unterminated regular expression", line_no)
 
