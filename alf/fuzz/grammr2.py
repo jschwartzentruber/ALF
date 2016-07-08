@@ -272,7 +272,7 @@ class Grammar(object):
                            ^(?P<broken>.*)\\$ |
                            ^\s*(?P<comment>\#).*$ |
                            ^(?P<nothing>\s*)$ |
-                           ^(?P<name>[\w-]+)(?P<type>\s*((?P<weight>[\d.]+)|\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\}|import)\s*|\s+)(?P<def>.+)$ |
+                           ^(?P<name>[\w:-]+)(?P<type>((?P<weight>\s+[\d.]+\s+)|\s*\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\}\s+|\s+import\s+)|\s+)(?P<def>.+)$ |
                            ^\s+((?P<contweight>[\d.]+))\s*(?P<cont>.+)$
                            """, re.VERBOSE)
 
@@ -315,9 +315,9 @@ class Grammar(object):
             pstate.line_no += 1
             pstate.n_implicit = -1
             log.debug("parsing line # %d: %s", pstate.line_no, line.rstrip())
-            m = Grammar._RE_LINE.match(ljoin + line)
+            m = Grammar._RE_LINE.match("%s%s" % (ljoin, line))
             if m is None:
-                raise ParseError("Parse error", pstate)
+                raise ParseError("Failed to parse definition at: %s%s" % (ljoin, line.rstrip()), pstate)
             if m.group("broken") is not None:
                 ljoin = m.group("broken")
                 continue
@@ -489,8 +489,8 @@ class Symbol(object):
                            ^(?P<infunc>[,)]) |
                            ^(?P<comment>\#).* |
                            ^(?P<func>\w+)\( |
-                           ^@(?P<refprefix>[\w-]+\.)?(?P<ref>[\w-]+) |
-                           ^(?P<symprefix>[\w-]+\.)?(?P<sym>[\w-]+) |
+                           ^@(?P<refprefix>[\w-]+\.)?(?P<ref>[\w:-]+) |
+                           ^(?P<symprefix>[\w-]+\.)?(?P<sym>[\w:-]+) |
                            ^(?P<ws>\s+)""", re.VERBOSE)
 
     def __init__(self, name, pstate, no_add=False):
