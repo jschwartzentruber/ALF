@@ -52,9 +52,10 @@ if bool(os.getenv("DEBUG")):
 class GrammarException(Exception):
     def __str__(self):
         if len(self.args) == 2:
-            if isinstance(self.args[1], _ParseState):
-                return "%s (line %d)" % (self.args[0], self.args[1].line_no)
-            return "%s (line %d)" % self.args
+            msg, pstate = self.args
+            if isinstance(pstate, _ParseState):
+                return "%s (%sline %d)" % (msg, "%s " % pstate.name if pstate.name else "", pstate.line_no)
+            return "%s (line %d)" % (msg, pstate) # pstate is line_no in this case
         if len(self.args) == 1:
             return str(self.args[0])
         return str(self.args)
@@ -78,12 +79,14 @@ class _GenState(object):
 
 class _ParseState(object):
 
-    def __init__(self, prefix, grmr):
+    def __init__(self, prefix, grmr, filename):
         self.prefix = prefix
-        self.imports = {}
+        self.imports = {} # friendly name -> (grammar hash, import line_no)
+        self.imports_used = set() # friendly names used by get_prefixed()
         self.line_no = 0
         self.n_implicit = -1
         self.grmr = grmr
+        self.name = filename
 
     def implicit(self):
         self.n_implicit += 1
@@ -93,12 +96,22 @@ class _ParseState(object):
         if symprefix:
             symprefix = symprefix[:-1]
             try:
-                symprefix = self.imports[symprefix]
+                newprefix = self.imports[symprefix][0]
+                self.imports_used.add(symprefix)
+                symprefix = newprefix
             except KeyError:
                 raise ParseError("Attempt to use symbol from unknown prefix: %s" % symprefix, self)
         else:
             symprefix = self.prefix
         return "%s.%s" % (symprefix, sym)
+
+    def add_import(self, name, grammar_hash):
+        self.imports[name] = (grammar_hash, self.line_no)
+
+    def sanity_check(self):
+        unused = set(self.imports) - self.imports_used
+        if unused:
+            raise IntegrityError("Unused import%s: %s" % ("s" if len(unused) > 1 else "", list(unused)), self)
 
 
 class WeightedChoice(object):
@@ -307,7 +320,7 @@ class Grammar(object):
             return grammar_hash
         imports[grammar_hash] = prefix
         grammar.seek(0)
-        pstate = _ParseState(grammar_hash, self)
+        pstate = _ParseState(grammar_hash, self, grammar_fn)
 
         sym = None
         ljoin = ""
@@ -352,7 +365,7 @@ class Grammar(object):
                     for import_fn in import_paths:
                         try:
                             with open(import_fn) as g:
-                                pstate.imports[sym_name] = self.parse(g, prefix=sym_name, imports=imports)
+                                pstate.add_import(sym_name, self.parse(g, prefix=sym_name, imports=imports))
                             break
                         except IOError:
                             pass
@@ -368,11 +381,17 @@ class Grammar(object):
                 weight = float(m.group("contweight"))
                 sym.append(Symbol.parse(m.group("cont"), pstate), weight)
 
+        pstate.sanity_check()
+
         if prefix:
             # no sanity check until we're done all imports
             return grammar_hash
 
-        def reprefix(symname):
+        self.reprefix(imports)
+        self.sanity_check()
+
+    def reprefix(self, imports):
+        def get_prefixed(symname):
             try:
                 prefix, name = symname.split(".", 1)
             except ValueError:
@@ -390,25 +409,25 @@ class Grammar(object):
         for oldname in list(self.symtab):
             sym = self.symtab[oldname]
             assert oldname == sym.name
-            newname = reprefix(oldname)
+            newname = get_prefixed(oldname)
             if oldname != newname:
                 sym.name = newname
                 self.symtab[newname] = sym
                 del self.symtab[oldname]
             if isinstance(sym, WeightedChoice):
-                sym.values = [[reprefix(y) for y in x] for x in sym.values]
+                sym.values = [[get_prefixed(y) for y in x] for x in sym.values]
             elif isinstance(sym, list):
                 for i in range(len(sym)):
-                    sym[i] = reprefix(sym[i])
+                    sym[i] = get_prefixed(sym[i])
             elif isinstance(sym, RefSymbol):
-                sym.ref = reprefix(sym.ref)
+                sym.ref = get_prefixed(sym.ref)
             elif isinstance(sym, FuncSymbol):
                 for i in range(len(sym.args)):
                     if not isinstance(sym.args[i], numbers.Number):
-                        sym.args[i] = reprefix(sym.args[i])
-        self.tracked = {reprefix(t) for t in self.tracked}
+                        sym.args[i] = get_prefixed(sym.args[i])
+        self.tracked = {get_prefixed(t) for t in self.tracked}
 
-        # sanity check
+    def sanity_check(self):
         funcs_used = {"rndflt", "rndint", "rndpow2"}
         for name, sym in self.symtab.items():
             if isinstance(sym, AbstractSymbol):
@@ -430,8 +449,10 @@ class Grammar(object):
             log.debug("%s is %s with %d children", sym.name, type(sym).__name__, len(children))
             syms_used |= children
             to_check |= children - checked
-        if set(self.symtab) != syms_used:
-            unused_syms = tuple(set(self.symtab) - syms_used)
+        # ignore unused symbols that came from an import, Text, Regex, or Bin
+        syms_ignored = {s for s in self.symtab if re.search(r"[.\[]", s)}
+        unused_syms = list(set(self.symtab) - syms_used - syms_ignored)
+        if unused_syms:
             raise IntegrityError("Unused symbol%s: %s" % ("s" if len(unused_syms) > 1 else "", unused_syms))
         # build paths to terminal symbols
         cont = True
@@ -450,6 +471,9 @@ class Grammar(object):
                         if all(self.symtab[c].can_terminate for c in s.children()):
                             s.can_terminate = True
                             cont = True
+        for s in self.symtab.values():
+            if not (s.can_terminate or any(self.symtab[c].can_terminate for c in s.children())):
+                raise IntegrityError("Symbol has no paths to termination (infinite recursion?): %s" % s.name, s.line_no)
 
     def is_limit_exceeded(self, length):
         return self._limit is not None and length >= self._limit

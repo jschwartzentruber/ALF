@@ -284,6 +284,22 @@ class GrammarTests(unittest.TestCase):
         b_count = len(o) - a_count
         self.assertAlmostEqual(a_count, b_count, delta=len(o) * 0.2)
 
+    def test_recursive_defn(self):
+        with self.assertRaises(IntegrityError):
+            Grammar("root root")
+
+    def test_unused_sym(self):
+        with self.assertRaisesRegexp(IntegrityError, r'^Unused symbol:'):
+            Grammar('root a\n'
+                    'a "A"\n'
+                    'b "B"')
+
+    def test_unused_cycle(self):
+        with self.assertRaises(IntegrityError):
+            Grammar('root "A"\n'
+                    'a b\n'
+                    'b a')
+
 
 class GrammarImportTests(unittest.TestCase):
 
@@ -296,11 +312,11 @@ class GrammarImportTests(unittest.TestCase):
         os.chdir(self.cwd)
         shutil.rmtree(self.tmpd)
 
-    #def test_unused_import(self):
-    #    open('blah.gmr', 'w').close()
-    #    with self.assertRaisesRegexp(IntegrityError, r'^Unused imported grammar'):
-    #        w = Grammar("root 'a'\n"
-    #                    "unused import 'blah.gmr'")
+    def test_unused_import(self):
+        open('blah.gmr', 'w').close()
+        with self.assertRaisesRegexp(IntegrityError, r'^Unused import'):
+            w = Grammar("root 'a'\n"
+                        "unused import 'blah.gmr'")
 
     def test_use_before_import(self):
         with self.assertRaisesRegexp(ParseError, r'^Attempt to use symbol from unknown prefix'):
@@ -327,6 +343,21 @@ class GrammarImportTests(unittest.TestCase):
                     'a @a.a')
         w = Grammar(open('a.gmr'))
         self.assertEqual(w.generate(), "AA")
+
+    def test_recursive_defn(self):
+        with open('b.gmr', 'w') as g:
+            g.write('b import "b.gmr"\n'
+                    'root b.a\n'
+                    'a b.a')
+        with self.assertRaises(IntegrityError):
+            Grammar(open('b.gmr'))
+
+    def test_unused_import_sym(self):
+        with open('a.gmr', 'w') as g:
+            g.write('a "A"\n'
+                    'b "B"')
+        Grammar('a import "a.gmr"\n'
+                'root a.a')
 
 
 suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(t) for t in (GrammarTests, GrammarImportTests))
