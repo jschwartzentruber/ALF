@@ -574,72 +574,6 @@ class BinSymbol(Symbol):
         return sym, defn
 
 
-class TextSymbol(Symbol):
-    _RE_QUOTE = re.compile(r'''(?P<end>["'])|\\(?P<esc>.)''')
-
-    def __init__(self, prefix, value, line_no, grmr):
-        name = "[text (line %d #%d)]" % (line_no, grmr.implicit() if grmr is not None else -1)
-        name = "%s.%s" % (prefix, name) if prefix is not None else name
-        Symbol.__init__(self, name, line_no, grmr)
-        self.value = value
-        log.debug("\ttext %s: %s", name, value)
-        self.can_terminate = True
-
-    def generate(self, gstate):
-        gstate.output.append(self.value)
-        gstate.length += len(self.value)
-
-    @staticmethod
-    def parse(prefix, imports, defn, line_no, grmr):
-        qchar, defn = defn[0], defn[1:]
-        if qchar not in "'\"":
-            raise ParseError("Error parsing string, expected \" or ' at: %s%s" % (qchar, defn), line_no)
-        out, last = [], 0
-        for m in TextSymbol._RE_QUOTE.finditer(defn):
-            out.append(defn[last:m.start(0)])
-            last = m.end(0)
-            if m.group("end") == qchar:
-                break
-            elif m.group("end"):
-                out.append(m.group("end"))
-            else:
-                try:
-                    out.append({"n": "\n",
-                                "r": "\r",
-                                "t": "\t",
-                                "v": "\v"}[m.group("esc")])
-                except KeyError:
-                    out.append(m.group("esc"))
-        else:
-            raise ParseError("Unterminated string literal!", line_no)
-        defn = defn[last:]
-        sym = TextSymbol(prefix, "".join(out), line_no, grmr)
-        return sym, defn
-
-
-class ConcatSymbol(Symbol, list):
-
-    def __init__(self, prefix, name, line_no, grmr):
-        name = "%s.%s" % (prefix, name) if prefix is not None else name
-        Symbol.__init__(self, name, line_no, grmr)
-        list.__init__(self)
-        if type(self) == ConcatSymbol:
-            log.debug("\tconcat %s", name)
-        self.can_terminate = None
-
-    def generate(self, gstate):
-        gstate.symstack.extend(reversed(self))
-
-    def children(self):
-        return set(self)
-
-    @staticmethod
-    def parse(prefix, imports, name, defn, line_no, grmr):
-        result = ConcatSymbol(prefix, name, line_no, grmr)
-        result.extend(Symbol.parse(prefix, imports, defn, line_no, grmr))
-        return result
-
-
 class ChoiceSymbol(Symbol, WeightedChoice):
 
     def __init__(self, prefix, name, line_no, grmr):
@@ -669,6 +603,29 @@ class ChoiceSymbol(Symbol, WeightedChoice):
         for child in self.values:
             children |= set(child)
         return children
+
+
+class ConcatSymbol(Symbol, list):
+
+    def __init__(self, prefix, name, line_no, grmr):
+        name = "%s.%s" % (prefix, name) if prefix is not None else name
+        Symbol.__init__(self, name, line_no, grmr)
+        list.__init__(self)
+        if type(self) == ConcatSymbol:
+            log.debug("\tconcat %s", name)
+        self.can_terminate = None
+
+    def generate(self, gstate):
+        gstate.symstack.extend(reversed(self))
+
+    def children(self):
+        return set(self)
+
+    @staticmethod
+    def parse(prefix, imports, name, defn, line_no, grmr):
+        result = ConcatSymbol(prefix, name, line_no, grmr)
+        result.extend(Symbol.parse(prefix, imports, defn, line_no, grmr))
+        return result
 
 
 class FuncSymbol(Symbol):
@@ -750,29 +707,6 @@ class RefSymbol(Symbol):
 
     def children(self):
         return {self.ref}
-
-
-class RepeatSymbol(Symbol, list):
-
-    def __init__(self, prefix, name, a, b, line_no, grmr):
-        name = "%s.%s" % (prefix, name) if prefix is not None else name
-        Symbol.__init__(self, name, line_no, grmr)
-        list.__init__(self)
-        self.a, self.b = a, b
-        log.debug("\trepeat %s", name)
-        self.can_terminate = None
-
-    def generate(self, gstate):
-        if gstate.grmr.is_limit_exceeded(gstate.length):
-            if not self.can_terminate:
-                return # chop the output. this isn't great, but not much choice
-            n = self.a
-        else:
-            n = random.randint(self.a, random.randint(self.a, self.b)) # roughly betavariate(0.75, 2.25)
-        gstate.symstack.extend(n * tuple(reversed(self)))
-
-    def children(self):
-        return set(self)
 
 
 class RegexSymbol(ConcatSymbol):
@@ -891,6 +825,72 @@ class RegexSymbol(ConcatSymbol):
                 sym = TextSymbol(prefix, defn[c], line_no, grmr)
                 c += 1
         raise ParseError("Unterminated regular expression", line_no)
+
+
+class RepeatSymbol(Symbol, list):
+
+    def __init__(self, prefix, name, a, b, line_no, grmr):
+        name = "%s.%s" % (prefix, name) if prefix is not None else name
+        Symbol.__init__(self, name, line_no, grmr)
+        list.__init__(self)
+        self.a, self.b = a, b
+        log.debug("\trepeat %s", name)
+        self.can_terminate = None
+
+    def generate(self, gstate):
+        if gstate.grmr.is_limit_exceeded(gstate.length):
+            if not self.can_terminate:
+                return # chop the output. this isn't great, but not much choice
+            n = self.a
+        else:
+            n = random.randint(self.a, random.randint(self.a, self.b)) # roughly betavariate(0.75, 2.25)
+        gstate.symstack.extend(n * tuple(reversed(self)))
+
+    def children(self):
+        return set(self)
+
+
+class TextSymbol(Symbol):
+    _RE_QUOTE = re.compile(r'''(?P<end>["'])|\\(?P<esc>.)''')
+
+    def __init__(self, prefix, value, line_no, grmr):
+        name = "[text (line %d #%d)]" % (line_no, grmr.implicit() if grmr is not None else -1)
+        name = "%s.%s" % (prefix, name) if prefix is not None else name
+        Symbol.__init__(self, name, line_no, grmr)
+        self.value = value
+        log.debug("\ttext %s: %s", name, value)
+        self.can_terminate = True
+
+    def generate(self, gstate):
+        gstate.output.append(self.value)
+        gstate.length += len(self.value)
+
+    @staticmethod
+    def parse(prefix, imports, defn, line_no, grmr):
+        qchar, defn = defn[0], defn[1:]
+        if qchar not in "'\"":
+            raise ParseError("Error parsing string, expected \" or ' at: %s%s" % (qchar, defn), line_no)
+        out, last = [], 0
+        for m in TextSymbol._RE_QUOTE.finditer(defn):
+            out.append(defn[last:m.start(0)])
+            last = m.end(0)
+            if m.group("end") == qchar:
+                break
+            elif m.group("end"):
+                out.append(m.group("end"))
+            else:
+                try:
+                    out.append({"n": "\n",
+                                "r": "\r",
+                                "t": "\t",
+                                "v": "\v"}[m.group("esc")])
+                except KeyError:
+                    out.append(m.group("esc"))
+        else:
+            raise ParseError("Unterminated string literal!", line_no)
+        defn = defn[last:]
+        sym = TextSymbol(prefix, "".join(out), line_no, grmr)
+        return sym, defn
 
 
 if __name__ == "__main__":
