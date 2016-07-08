@@ -241,7 +241,6 @@ class Grammar(object):
 
     def __init__(self, grammar="", limit=DEFAULT_LIMIT, **kwargs):
         self._limit = limit
-        self._start = None
         self.symtab = {}
         self.tracked = set()
         self.funcs = kwargs
@@ -471,9 +470,6 @@ class Symbol(object):
     def generate(self, gstate):
         raise GenerationError("Can't generate symbol %s of type %s" % (self.name, type(self)), self.line_no)
 
-    def match(self, inp, ptr):
-        return 0
-
     def children(self):
         return set()
 
@@ -563,12 +559,6 @@ class BinSymbol(Symbol):
         gstate.output.append(self.value)
         gstate.length += len(self.value)
 
-    def match(self, inp, ptr):
-        # returns the length of matching input (0 for no match)
-        if inp.startswith(self.value, ptr):
-            return len(self.value)
-        return 0
-
     @staticmethod
     def parse(prefix, imports, defn, line_no, grmr):
         x, qchar, defn = defn[0], defn[1], defn[2:]
@@ -598,12 +588,6 @@ class TextSymbol(Symbol):
     def generate(self, gstate):
         gstate.output.append(self.value)
         gstate.length += len(self.value)
-
-    def match(self, inp, ptr):
-        # returns the length of matching input (0 for no match)
-        if inp.startswith(self.value, ptr):
-            return len(self.value)
-        return 0
 
     @staticmethod
     def parse(prefix, imports, defn, line_no, grmr):
