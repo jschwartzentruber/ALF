@@ -1,4 +1,5 @@
 ################################################################################
+# coding=utf-8
 # Description: Grammr2 tests
 # Author: Jesse Schwartzentruber
 #
@@ -16,6 +17,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 ################################################################################
+from __future__ import unicode_literals
 from grammr2 import Grammar, WeightedChoice, ParseError, IntegrityError
 import os
 import re
@@ -300,6 +302,40 @@ class GrammarTests(unittest.TestCase):
                     'a b\n'
                     'b a')
 
+    def test_repeat(self):
+        g = Grammar('root {1,10} "A"')
+        for _ in range(100):
+            w = g.generate()
+            self.assertEqual(len(set(w)), 1)
+            self.assertEqual(w[0], "A")
+            self.assertIn(len(w), range(1, 11))
+
+    def test_repeat_sample0(self):
+        with self.assertRaises(IntegrityError):
+            Grammar('root <1,10> "A"')
+        with self.assertRaises(IntegrityError):
+            Grammar('root <1,10> a a\n'
+                    'a 1 "A"')
+
+    def test_repeat_sample1(self):
+        g = Grammar('root <1,10> a\n'
+                    'a 1 "A"')
+        for _ in range(100):
+            w = g.generate()
+            self.assertEqual(w, "A")
+
+    def test_repeat_sample1(self):
+        g = Grammar('root <1,10> a\n'
+                    'a 9 "A"\n'
+                    ' 1 "B"')
+        outs = {"A": 0, "B": 0, "BA": 0, "AB": 0}
+        for _ in range(1000):
+            outs[g.generate()] += 1
+        self.assertGreater(outs["AB"] + outs["BA"], outs["A"] + outs["B"])
+        self.assertGreater(outs["AB"], outs["BA"])
+        self.assertGreater(outs["A"], outs["B"])
+
+
 
 class GrammarImportTests(unittest.TestCase):
 
@@ -312,41 +348,47 @@ class GrammarImportTests(unittest.TestCase):
         os.chdir(self.cwd)
         shutil.rmtree(self.tmpd)
 
+    def test_import_reserved(self):
+        with self.assertRaises(ParseError):
+            Grammar('import blah "blah.gmr"')
+
     def test_unused_import(self):
         open('blah.gmr', 'w').close()
         with self.assertRaisesRegexp(IntegrityError, r'^Unused import'):
-            w = Grammar("root 'a'\n"
-                        "unused import 'blah.gmr'")
+            Grammar("root 'a'\n"
+                    "unused import('blah.gmr')")
 
     def test_use_before_import(self):
         with self.assertRaisesRegexp(ParseError, r'^Attempt to use symbol from unknown prefix'):
-            w = Grammar("root a.b")
+            Grammar("root a.b")
 
     def test_notfound_import(self):
+        with self.assertRaises(ParseError):
+             Grammar("a import()")
         with self.assertRaisesRegexp(IntegrityError, r'^Could not find imported grammar'):
-            w = Grammar("a import ''")
+            Grammar("a import('')")
 
     def test_simple(self):
         with open('a.gmr', 'w') as g:
             g.write('a "A"')
-        w = Grammar("b import 'a.gmr'\n"
+        w = Grammar("b import('a.gmr')\n"
                     "root b.a")
         self.assertEqual(w.generate(), 'A')
 
     def test_nested(self):
         with open('a.gmr', 'w') as g:
-            g.write('b import "b.gmr"\n'
+            g.write('b import("b.gmr")\n'
                     'root a b.a\n'
                     'a "A"')
         with open('b.gmr', 'w') as g:
-            g.write('a import "a.gmr"\n'
+            g.write('a import("a.gmr")\n'
                     'a @a.a')
         w = Grammar(open('a.gmr'))
         self.assertEqual(w.generate(), "AA")
 
     def test_recursive_defn(self):
         with open('b.gmr', 'w') as g:
-            g.write('b import "b.gmr"\n'
+            g.write('b import("b.gmr")\n'
                     'root b.a\n'
                     'a b.a')
         with self.assertRaises(IntegrityError):
@@ -356,7 +398,7 @@ class GrammarImportTests(unittest.TestCase):
         with open('a.gmr', 'w') as g:
             g.write('a "A"\n'
                     'b "B"')
-        Grammar('a import "a.gmr"\n'
+        Grammar('a import("a.gmr")\n'
                 'root a.a')
 
 

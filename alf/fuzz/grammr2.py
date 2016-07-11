@@ -1,4 +1,5 @@
 ################################################################################
+# coding=utf-8
 # Description: Grammar based generation/fuzzer
 # Author: Jesse Schwartzentruber
 #
@@ -33,6 +34,7 @@
 #              1 Def2
 ################################################################################
 
+from __future__ import unicode_literals
 import binascii
 import hashlib
 import io
@@ -41,6 +43,11 @@ import numbers
 import os
 import random
 import re
+import sys
+
+
+if sys.version_info.major == 2:
+    str = unicode
 
 
 DEFAULT_LIMIT = 100 * 1024
@@ -75,6 +82,12 @@ class _GenState(object):
         self.output = []
         self.grmr = grmr
         self.length = 0
+
+    def append(self, value):
+        if self.output and not isinstance(value, type(self.output[0])):
+            raise GenerationError("Wrong value type generated, expecting %s, got %s" % (type(self.output[0]).__name__, type(value).__name__))
+        self.output.append(value)
+        self.length += len(value)
 
 
 class _ParseState(object):
@@ -140,6 +153,24 @@ class WeightedChoice(object):
                 return v
         raise AssertionError("Too much total weight? remainder is %0.2f from %0.2f total" % (target, self.total))
 
+    def sample(self, k):
+        weights, values, total = self.weights[:], self.values[:], self.total
+        result = []
+        while k and total:
+            target = random.uniform(0, total)
+            for i, (w, v) in enumerate(zip(weights, values)):
+                target -= w
+                if target < 0:
+                    result.append(v)
+                    total -= w
+                    k -= 1
+                    del weights[i]
+                    del values[i]
+                    break
+            else:
+                raise AssertionError("Too much total weight? remainder is %0.2f from %0.2f total" % (target, total))
+        return result
+
     def __repr__(self):
         return "WeightedChoice(%s)" % list(zip(self.values, self.weights))
 
@@ -192,6 +223,16 @@ class Grammar(object):
                 SymbolName      {Min,Max}   SubSymbol
 
         Defines a repetition of a sub-symbol. The number of repetitions is at most ``Max``, and at minimum ``Min``.
+
+    **Repeat Unique**: (must be named, not implicit)
+
+            ::
+
+                SymbolName      <Min,Max>   SubSymbol
+
+        Defines a repetition of a sub-symbol. The number of repetitions is at most ``Max``, and at minimum ``Min``.
+        The sub-symbol must be a single ``ChoiceSymbol``, and the generated repetitions will be unique from the
+        choices in the sub-symbol.
 
     **Text**:
 
@@ -274,7 +315,7 @@ class Grammar(object):
 
             ::
 
-                ModuleName  import  "filename"
+                ModuleName  import("filename")
 
         Imports allow you to break up grammars into multiple files. A grammar which imports another assigns it a local
         name ``ModuleName``, which may be used to access symbols from that grammar such as ``ModuleName.Symbol``, etc.
@@ -285,7 +326,14 @@ class Grammar(object):
                            ^(?P<broken>.*)\\$ |
                            ^\s*(?P<comment>\#).*$ |
                            ^(?P<nothing>\s*)$ |
-                           ^(?P<name>[\w:-]+)(?P<type>((?P<weight>\s+[\d.]+\s+)|\s*\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\}\s+|\s+import\s+)|\s+)(?P<def>.+)$ |
+                           ^(?P<name>[\w:-]+)
+                                (?P<type>((?P<weight>\s+[\d.]+\s+)
+                                          |\s*\{\s*(?P<a>\d+)\s*(,\s*(?P<b>\d+)\s*)?\}\s+
+                                          |\s* <\s*(?P<c>\d+)\s*(,\s*(?P<d>\d+)\s*)? >\s+
+                                          |\s+import\(\s*)
+                                 |
+                                 \s+)
+                                (?P<def>.+)$ |
                            ^\s+((?P<contweight>[\d.]+))\s*(?P<cont>.+)$
                            """, re.VERBOSE)
 
@@ -300,20 +348,22 @@ class Grammar(object):
             self.funcs["rndpow2"] = lambda a, b: str(2 ** random.randint(0, int(a)) + random.randint(-int(b), int(b)))
         if "rndflt" not in self.funcs:
             self.funcs["rndflt"] = lambda a, b: str(random.uniform(float(a), float(b)))
+        if "import" in self.funcs:
+            raise IntegrityError("'import' is a reserved function name")
 
         # initial definitions use hash of the grammar as the prefix, keeping track of the first used friendly name ("" for top level)
         # when grammar and imports are fully parsed, do a final pass to rename hash prefixes to friendly prefixes
-        # sanity checking should ignore unused prefixed symbols, but not unused prefixes. (TODO)
+        # sanity checking should ignore unused prefixed symbols, but not unused prefixes.
 
         self.parse(grammar)
 
     def parse(self, grammar, prefix="", imports=None):
-        if not isinstance(grammar, (file, io.IOBase)):
-            grammar = io.StringIO(grammar.decode() if isinstance(grammar, bytes) else grammar)
+        if not hasattr(grammar, "read"):
+            grammar = io.StringIO(grammar)
             grammar_fn = None
         else:
             grammar_fn = getattr(grammar, "name", None)
-        grammar_hash = hashlib.sha224(grammar.read()).hexdigest()
+        grammar_hash = hashlib.sha512(grammar.read().encode("utf-8")).hexdigest()[:6]
         if imports is None:
             imports = {} # hash -> friendly prefix
         if grammar_hash in imports:
@@ -352,11 +402,21 @@ class Grammar(object):
                     b = int(b) if b else a
                     sym = RepeatSymbol(sym_name, a, b, pstate)
                     sym.extend(Symbol.parse(sym_def, pstate))
-                elif sym_type.startswith("import"):
+                elif sym_type.startswith("<"):
+                    # repeat (unique)
+                    a, b = m.group("c", "d")
+                    a = int(a)
+                    b = int(b) if b else a
+                    sym = RepeatSampleSymbol(sym_name, a, b, pstate)
+                    sym.extend(Symbol.parse(sym_def, pstate))
+                elif sym_type.startswith("import("):
                     sym, defn = TextSymbol.parse(sym_def, pstate, no_add=True)
                     defn = defn.strip()
+                    if not defn.startswith(")"):
+                        raise ParseError("Expected ')' parsing import at: %s" % defn, pstate)
+                    defn = defn[1:].lstrip()
                     if defn.startswith("#") or defn:
-                        raise IntegrityError("Unexpected input following import: %s" % defn, pstate)
+                        raise ParseError("Unexpected input following import: %s" % defn, pstate)
                     # resolve sym.value from current grammar path or "."
                     if grammar_fn is not None:
                         import_paths = [os.path.join(os.path.dirname(grammar_fn), sym.value), sym.value]
@@ -436,6 +496,11 @@ class Grammar(object):
                 if sym.fname not in self.funcs:
                     raise IntegrityError("Function %s used but not defined" % sym.fname, sym.line_no)
                 funcs_used.add(sym.fname)
+            elif isinstance(sym, RepeatSampleSymbol):
+                if len(sym) != 1:
+                    raise IntegrityError("RepeatSampleSymbol %s can only have one child, got %d" % (name, len(sym)), sym.line_no)
+                if not isinstance(self.symtab[sym[0]], ChoiceSymbol):
+                    raise IntegrityError("RepeatSampleSymbol %s child must be a ChoiceSymbol, got %s(%s)" % (name, type(self.symtab[sym[0]]).__name__, sym[0]), sym.line_no)
         if set(self.funcs) != funcs_used:
             unused_kwds = tuple(set(self.funcs) - funcs_used)
             raise IntegrityError("Unused keyword argument%s: %s" % ("s" if len(unused_kwds) > 1 else "", unused_kwds))
@@ -518,8 +583,11 @@ class Symbol(object):
                            ^(?P<ws>\s+)""", re.VERBOSE)
 
     def __init__(self, name, pstate, no_add=False):
+        if name == '%s.import' % pstate.prefix:
+            raise ParseError("'import' is a reserved name", pstate)
         self.name = name
         self.line_no = pstate.line_no
+        log.debug('\t%s %s', type(self).__name__.lower()[:-6], name)
         if not no_add:
             if name in pstate.grmr.symtab and not isinstance(pstate.grmr.symtab[name], (AbstractSymbol, RefSymbol)):
                 raise ParseError("Redefinition of symbol %s (line %d, previously declared on line %d)" % (name, self.line_no, pstate.grmr.symtab[name].line_no))
@@ -588,7 +656,6 @@ class AbstractSymbol(Symbol):
 
     def __init__(self, name, pstate):
         Symbol.__init__(self, name, pstate)
-        log.debug("\tabstract %s", name)
 
 
 class BinSymbol(Symbol):
@@ -598,12 +665,10 @@ class BinSymbol(Symbol):
         name = "%s.[bin (line %d #%d)]" % (pstate.prefix, pstate.line_no, pstate.implicit())
         Symbol.__init__(self, name, pstate)
         self.value = binascii.unhexlify(value)
-        log.debug("\tbin %s: %s", name, value)
         self.can_terminate = True
 
     def generate(self, gstate):
-        gstate.output.append(self.value)
-        gstate.length += len(self.value)
+        gstate.append(self.value)
 
     @staticmethod
     def parse(defn, pstate):
@@ -626,7 +691,6 @@ class ChoiceSymbol(Symbol, WeightedChoice):
         name = "%s.%s" % (pstate.prefix, name) if not no_prefix else name
         Symbol.__init__(self, name, pstate)
         WeightedChoice.__init__(self)
-        log.debug("\tchoice %s", name)
         self.can_terminate = None
         self._choices_terminate = []
 
@@ -657,8 +721,6 @@ class ConcatSymbol(Symbol, list):
         name = "%s.%s" % (pstate.prefix, name) if not no_prefix else name
         Symbol.__init__(self, name, pstate)
         list.__init__(self)
-        if type(self) == ConcatSymbol:
-            log.debug("\tconcat %s", name)
         self.can_terminate = None
 
     def generate(self, gstate):
@@ -693,17 +755,15 @@ class FuncSymbol(Symbol):
                 astate.symstack = [arg]
                 astate.instances = gstate.instances
                 args.append(gstate.grmr.generate(astate))
-        result = gstate.grmr.funcs[self.fname](*args)
-        if not isinstance(result, (str, unicode)):
-            raise GenerationError("Function %s returned type %s instead of str" % (self.name, type(result)))
-        gstate.output.append(result)
-        gstate.length += len(gstate.output[-1])
+        gstate.append(gstate.grmr.funcs[self.fname](*args))
 
     def children(self):
         return set(a for a in self.args if not isinstance(a, numbers.Number))
 
     @staticmethod
     def parse(name, defn, pstate):
+        if name == "import":
+            raise ParseError("'import' is a reserved function name", pstate)
         result = FuncSymbol(name, pstate)
         done = False
         while not done:
@@ -740,13 +800,11 @@ class RefSymbol(Symbol):
             pstate.grmr.symtab[ref] = AbstractSymbol(ref, pstate)
         self.ref = ref
         pstate.grmr.tracked.add(ref)
-        log.debug("\tref %s", ref)
         self.can_terminate = None
 
     def generate(self, gstate):
         if gstate.instances[self.ref]:
-            gstate.output.append(random.choice(gstate.instances[self.ref]))
-            gstate.length += len(gstate.output[-1])
+            gstate.append(random.choice(gstate.instances[self.ref]))
         else:
             log.debug("No instances of %s yet, generating one instead of a reference", self.ref)
             gstate.grmr.symtab[self.ref].generate(gstate)
@@ -765,7 +823,6 @@ class RegexSymbol(ConcatSymbol):
     def __init__(self, pstate):
         name = "%s.[regex (line %d #%d)]" % (pstate.prefix, pstate.line_no, pstate.implicit())
         ConcatSymbol.__init__(self, name, pstate, no_prefix=True)
-        log.debug("\tregex %s", name)
         self.can_terminate = True
 
     def new_choice(self, n, pstate):
@@ -884,7 +941,6 @@ class RepeatSymbol(Symbol, list):
         Symbol.__init__(self, name, pstate)
         list.__init__(self)
         self.a, self.b = a, b
-        log.debug("\trepeat %s", name)
         self.can_terminate = None
 
     def generate(self, gstate):
@@ -900,6 +956,19 @@ class RepeatSymbol(Symbol, list):
         return set(self)
 
 
+class RepeatSampleSymbol(RepeatSymbol):
+
+    def generate(self, gstate):
+        if gstate.grmr.is_limit_exceeded(gstate.length):
+            if not self.can_terminate:
+                return # chop the output. this isn't great, but not much choice
+            n = self.a
+        else:
+            n = random.randint(self.a, random.randint(self.a, self.b)) # roughly betavariate(0.75, 2.25)
+        for selection in reversed(gstate.grmr.symtab[self[0]].sample(n)):
+            gstate.symstack.extend(reversed(selection))
+
+
 class TextSymbol(Symbol):
     _RE_QUOTE = re.compile(r'''(?P<end>["'])|\\(?P<esc>.)''')
 
@@ -907,13 +976,11 @@ class TextSymbol(Symbol):
         name = "[text (line %d #%d)]" % (pstate.line_no, pstate.implicit() if not no_add else -1)
         name = "%s.%s" % (pstate.prefix, name) if not no_prefix else name
         Symbol.__init__(self, name, pstate, no_add=no_add)
-        self.value = value
-        log.debug("\ttext %s: %s", name, value)
+        self.value = str(value)
         self.can_terminate = True
 
     def generate(self, gstate):
-        gstate.output.append(self.value)
-        gstate.length += len(self.value)
+        gstate.append(self.value)
 
     @staticmethod
     def parse(defn, pstate, no_add=False):
